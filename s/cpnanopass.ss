@@ -5064,8 +5064,17 @@
           (def-len fxvector-length mask-fxvector type-fxvector fxvector-type-disp fxvector-length-offset)
           (def-len string-length mask-string type-string string-type-disp string-length-offset)
           (def-len bytevector-length mask-bytevector type-bytevector bytevector-type-disp bytevector-length-offset))
-        ; TODO: consider adding integer?, integer-valued?, rational?, rational-valued?,
+        ; TODO: consider adding integer-valued?, rational?, rational-valued?,
         ; real?, and real-valued?
+        (define-inline 2 integer?
+          [(e) (bind #t (e)
+                 (build-simple-or
+                   (%type-check mask-fixnum type-fixnum ,e)
+                   (build-simple-or
+                     (%typed-object-check mask-bignum type-bignum ,e)
+                     (build-and
+                       (%type-check mask-flonum type-flonum ,e)
+                       `(call ,(make-info-call src sexpr #f #f #f) #f ,(lookup-primref 3 'flinteger?) ,e)))))])
         (let ()
           (define build-number?
             (lambda (e)
@@ -5406,6 +5415,18 @@
                  (set! ,(%mref ,t ,(constant guardian-entry-tconc-disp)) ,e-tconc)
                  (set! ,(%mref ,t ,(constant guardian-entry-next-disp)) ,(%tc-ref guardian-entries))
                  (set! ,(%tc-ref guardian-entries) ,t))))])
+
+        (define-inline 2 guardian?
+          [(e)
+           (bind #t (e)
+             (build-and
+               (%type-check mask-closure type-closure ,e)
+               (%type-check mask-guardian-code type-guardian-code
+                 ,(%mref
+                    ,(%inline -
+                      ,(%mref ,e ,(constant closure-code-disp))
+                      ,(%constant code-data-disp))
+                    ,(constant code-type-disp)))))])
 
         (define-inline 2 virtual-register-count
           [() `(quote ,(constant virtual-register-count))])
@@ -9738,7 +9759,7 @@
                  (let ([tmp (make-tmp 't)])
                    `(seq
                       (set! ,tmp ,rhs)
-                      (mvcall ,(make-info-call (info-call-src info) (info-call-sexpr info) #f #f #f) #f ,consumer ,tmp ())))]
+                      ,(k `(mvcall ,(make-info-call (info-call-src info) (info-call-sexpr info) #f #f #f) #f ,consumer ,tmp ()))))]
                 [else ; set! & mvset
                  `(seq ,e ,(k `(mvcall ,(make-info-call (info-call-src info) (info-call-sexpr info) #f #f #f) #f ,consumer ,(%constant svoid) ())))])))))
       (CaseLambdaClause : CaseLambdaClause (ir) -> CaseLambdaClause ()

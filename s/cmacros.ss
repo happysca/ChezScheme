@@ -536,10 +536,11 @@
 (define-constant COMPRESS-LZ4 1)
 (define-constant COMPRESS-FORMAT-BITS 3)
 
-(define-constant COMPRESS-LOW 0)
-(define-constant COMPRESS-MEDIUM 1)
-(define-constant COMPRESS-HIGH 2)
-(define-constant COMPRESS-MAX 3)
+(define-constant COMPRESS-MIN 0)
+(define-constant COMPRESS-LOW 1)
+(define-constant COMPRESS-MEDIUM 2)
+(define-constant COMPRESS-HIGH 3)
+(define-constant COMPRESS-MAX 4)
 
 (define-constant SICONV-DUNNO 0)
 (define-constant SICONV-INVALID 1)
@@ -757,6 +758,7 @@
 (define-constant code-flag-system         #b0001)
 (define-constant code-flag-continuation   #b0010)
 (define-constant code-flag-template       #b0100)
+(define-constant code-flag-guardian       #b1000)
 
 (define-constant fixnum-bits
   (case (constant ptr-bits)
@@ -843,6 +845,10 @@
   (fxlogor (constant type-code)
            (fxsll (constant code-flag-continuation)
                   (constant code-flags-offset))))
+(define-constant type-guardian-code
+  (fxlogor (constant type-code)
+           (fxsll (constant code-flag-guardian)
+                  (constant code-flags-offset))))
 
 ;; type checks are generally performed by applying the mask to the object
 ;; then comparing against the type code.  a mask equal to
@@ -917,6 +923,9 @@
            (fx- (fxsll 1 (constant code-flags-offset)) 1)))
 (define-constant mask-continuation-code
   (fxlogor (fxsll (constant code-flag-continuation) (constant code-flags-offset))
+           (fx- (fxsll 1 (constant code-flags-offset)) 1)))
+(define-constant mask-guardian-code
+  (fxlogor (fxsll (constant code-flag-guardian) (constant code-flags-offset))
            (fx- (fxsll 1 (constant code-flags-offset)) 1)))
 (define-constant mask-thread       (constant byte-constant-mask))
 (define-constant mask-tlc          (constant byte-constant-mask))
@@ -1352,6 +1361,7 @@
    [ptr timer-ticks]
    [ptr disable-count]
    [ptr signal-interrupt-pending]
+   [ptr signal-interrupt-queue]
    [ptr keyboard-interrupt-pending]
    [ptr threadno]
    [ptr current-input]

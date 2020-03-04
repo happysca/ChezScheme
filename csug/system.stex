@@ -521,6 +521,8 @@ It is generally not a good idea, therefore, to establish handlers for
 memory faults, illegal instructions, and the like, since the code that
 causes the fault or illegal instruction will continue to execute
 (presumably erroneously) for some time before the handler is invoked.
+A finite amount of storage is used to buffer as-yet unhandled
+signals, after which additional signals are dropped.
 
 \scheme{register-signal-handler} is supported only on Unix-based
 systems.
@@ -979,6 +981,52 @@ The parameter \scheme{source-directories} (Section~\ref{SECTSYSTEMSOURCE})
 determines the set of directories searched for source files not identified
 by absolute path names.
 
+%----------------------------------------------------------------------------
+
+\entryheader
+\formdef{verify-loadability}{\categoryprocedure}{(verify-loadability \var{situation} \var{input} \dots)}
+\returns unspecified
+\listlibraries
+\endentryheader
+
+\noindent
+\var{situation} must be one of the symbols \scheme{visit}, \scheme{revisit}, or \scheme{load}.
+Each \var{input} must be a string pathname or a pair of a string pathname and a library search path.
+Each of the pathnames should name a file containing object code for a set of libraries and
+top-level programs, such as would be produced by
+\index{\scheme{compile-program}}\scheme{compile-program},
+\index{\scheme{compile-library}}\scheme{compile-library},
+\index{\scheme{compile-whole-program}}\scheme{compile-whole-program},
+or
+\index{\scheme{compile-whole-library}}\scheme{compile-whole-library}.
+A library search path must be a suitable argument for
+\index{\scheme{library-directories}}\scheme{library-directories}.
+
+\scheme{verify-loadability} verifies, without actually loading any
+code or definining any libraries, whether the object files named
+by the specified pathnames and their library dependencies, direct
+or indirect, are present, readable, and mutually compatible.
+The type of dependencies for each named object file is determined
+by the \var{situation} argument: compile-time dependencies for
+\var{visit}, run-time dependencies for \var{revisit} and both for
+\var{load}.
+
+For each input pathname that is paired with a search path,
+the \scheme{library-directories} parameter is parameterized to the
+library search path during the recursive search for dependencies
+of the programs and libraries found in the object file named by the
+pathname.
+
+If \scheme{verify-loadabilty} finds a problem, such as a missing
+library dependency or compilation-instance mismatch, it raises an
+exception with an appropriate condition.
+Otherwise, it returns an unspecified value.
+
+Since \scheme{verify-loadability} does not load or run any code
+from the files it processes, it cannot determine whether errors
+unrelated to missing or unreadable files or mutual compatibility
+will occur when the files are actually loaded.
+
 
 %----------------------------------------------------------------------------
 \entryheader
@@ -1376,7 +1424,23 @@ The libraries incorporated into the resulting object file are visible (for
 use by \scheme{environment} and \scheme{eval}) if the \var{libs-visible?}
 argument is supplied and non-false.
 Any library incorporated into the resulting object file and required by
-an object file left to be loaded at run time is also visible.
+an object file left to be loaded at run time is also visible, as are any
+libraries the object file depends upon, regardless of the value of
+\var{libs-visible?}.
+
+\scheme{compile-whole-program} linearizes the initialization code for the
+set of incorporated libraries in a way that respects static
+dependencies among the libraries but not necessary dynamic dependencies
+deriving from initialization-time uses of \scheme{environment}
+or \scheme{eval}.
+Additional static dependencies can be added in most cases to force
+an ordering that allows the dynamic imports to succeed,
+though not in general since a different order might be required each
+time the program is run.
+Adding a static dependency of one library on a second requires
+adding an import of the second in the first as well as a run-time
+reference to one of the variables exported by the second in the
+body of the first.
 
 \var{input-filename} and \var{output-filename} must be strings.
 \var{input-filename} must identify a wpo file, and a wpo or object
@@ -1413,6 +1477,10 @@ except \var{input-filename} must specify a wpo file for a library,
 all libraries are automatically made visible, and a new wpo file is
 produced (when \scheme{generate-wpo-files} is \scheme{#t}) as well
 as an object file for the resulting combination of libraries.
+
+The comment in the description of \scheme{compile-whole-program}
+about the effect of initialization-code linearization on dynamic
+dependencies applies to \scheme{compile-whole-library} as well.
 
 %----------------------------------------------------------------------------
 \entryheader
@@ -1522,6 +1590,21 @@ first-element is the symbol \scheme{top-level-program},
 \scheme{compile-to-file} returns a list of the libraries the top-level
 program requires at run time, as with \scheme{compile-program}.
 Otherwise, the return value is unspecified.
+
+%----------------------------------------------------------------------------
+\entryheader
+\formdef{concatenate-object-files}{\categoryprocedure}{(concatenate-object-files \var{out-file} \var{in-file_1} \var{in-file_2} \dots)}
+\returns unspecified
+\listlibraries
+\endentryheader
+
+\var{out-file} and each \var{in-file} must be strings.
+
+\scheme{concatenate-object-files} combines the header information
+contained in the object files named by each \var{in-file}.  It then
+writes the combined header information to the file named by
+\var{out-file}, followed by the remaining object code from each
+input file in turn.
 
 %----------------------------------------------------------------------------
 \entryheader
