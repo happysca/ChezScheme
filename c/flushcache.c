@@ -27,10 +27,10 @@ typedef struct {
 
 static uptr max_gap;
 
-static ptr make_mod_range PROTO((uptr start, uptr end));
+static ptr make_mod_range(ptr tc, uptr start, uptr end);
 
-static ptr make_mod_range(uptr start, uptr end) {
-  ptr bv = S_bytevector(sizeof(mod_range));
+static ptr make_mod_range(ptr tc, uptr start, uptr end) {
+  ptr bv = S_bytevector2(tc, sizeof(mod_range), space_new);
   mod_range_start(bv) = start;
   mod_range_end(bv) = end;
   return bv;
@@ -59,7 +59,7 @@ void S_record_code_mod(ptr tc, uptr addr, uptr bytes) {
 #ifdef DEBUG
       printf("  record_code_mod new range %x to %x\n", addr, end); fflush(stdout);
 #endif
-  CODERANGESTOFLUSH(tc) = S_cons_in(space_new, 0, make_mod_range(addr, end), ls);
+  CODERANGESTOFLUSH(tc) = S_cons_in(tc, space_new, 0, make_mod_range(tc, addr, end), ls);
   return;
 }
 
@@ -72,7 +72,7 @@ extern void S_flush_instruction_cache(ptr tc) {
   CODERANGESTOFLUSH(tc) = Snil;
 }
 
-extern void S_flushcache_init() {
+extern void S_flushcache_init(void) {
   if (S_boot_time) {
     max_gap = S_flushcache_max_gap();
     if (max_gap < (uptr)(code_data_disp + byte_alignment)) {
@@ -84,6 +84,6 @@ extern void S_flushcache_init() {
 
 extern void S_record_code_mod(UNUSED ptr tc, UNUSED uptr addr, UNUSED uptr bytes) {}
 extern void S_flush_instruction_cache(UNUSED ptr tc) {}
-extern void S_flushcache_init() { return; }
+extern void S_flushcache_init(void) { return; }
 
 #endif /* FLUSHCACHE */

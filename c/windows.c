@@ -18,16 +18,18 @@
 
 #include "system.h"
 #include <objbase.h>
+#include <psapi.h>
 #include <io.h>
 #include <sys/stat.h>
 
+static ptr s_ErrorStringImp(DWORD dwMessageId, const char *lpcDefault);
 static ptr s_ErrorString(DWORD dwMessageId);
 static IUnknown *s_CreateInstance(CLSID *pCLSID, IID *iid);
 static ptr s_GetRegistry(wchar_t *s);
 static void s_PutRegistry(wchar_t *s, wchar_t *val);
 static void s_RemoveRegistry(wchar_t *s);
 
-void S_machine_init() {
+void S_machine_init(void) {
     Sregister_symbol("(com)CreateInstance", (void *)s_CreateInstance);
     Sregister_symbol("(windows)GetRegistry", (void *)s_GetRegistry);
     Sregister_symbol("(windows)PutRegistry", (void *)s_PutRegistry);
@@ -35,7 +37,7 @@ void S_machine_init() {
     Sregister_symbol("(windows)ErrorString", (void *)s_ErrorString);
 }
 
-INT S_getpagesize() {
+INT S_getpagesize(void) {
   SYSTEM_INFO si;
   GetSystemInfo(&si);
   return si.dwPageSize;
@@ -48,26 +50,55 @@ void *S_ntdlopen(const char *path) {
   return r;
 }
 
+HMODULE *S_enum_process_modules(void) {
+    DWORD cur_num_bytes = 1024;
+    DWORD req_num_bytes;
+    HMODULE *modules = malloc(cur_num_bytes);
+
+    if (!modules)
+        return NULL;
+
+    for (;;) {
+        if (!EnumProcessModules(GetCurrentProcess(), modules, cur_num_bytes, &req_num_bytes))
+            return NULL;
+        req_num_bytes += sizeof *modules; // for sentinel NULL value
+        if (req_num_bytes <= cur_num_bytes)
+            break;
+        HMODULE *new_mod = realloc(modules, req_num_bytes);
+        if (!new_mod) {
+            free(modules);
+            return NULL;
+        }
+
+        modules = new_mod;
+        cur_num_bytes = req_num_bytes;
+    }
+
+    const size_t numel = req_num_bytes/sizeof *modules;
+    modules[numel - 1] = NULL;
+
+    return modules;
+}
+
 void *S_ntdlsym(void *h, const char *s) {
     return (void *)GetProcAddress(h, s);
 }
 
-/* S_ntdlerror courtesy of Bob Burger, burgerrg@sagian.com */
-char *S_ntdlerror(void) {
-    static char s[80];
-    INT n;
-
-    n = FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(),
-                      0, (LPTSTR)s, 80, NULL);
-    if (n == 0) return "unable to load library";
-  /* Strip trailing period, newline & return when present */
-    if (n >= 3 && s[n-3] == '.') s[n-3] = 0;
-    return s;
+/* Initial version of S_ntdlerror courtesy of Bob Burger
+ * Modifications by James-Adam Renquinha Henri, jarhmander@gmail.com */
+ptr S_ntdlerror(void) {
+    return s_ErrorStringImp(GetLastError(), "unable to load library");
 }
 
 #ifdef FLUSHCACHE
-oops, no S_flushcache_max_gap or S_doflush
-#endif /* FLUSHCACHE */
+void S_doflush(uptr start, uptr end) {
+  FlushInstructionCache(GetCurrentProcess(), TO_VOIDP(start), end - start);
+}
+
+INT S_flushcache_max_gap(void) {
+  return 32;
+}
+#endif
 
 static void SplitRegistryKey(char *who, wchar_t *wholekey, HKEY *key, wchar_t **subkey, wchar_t **last) {
   wchar_t c, *s;
@@ -242,33 +273,48 @@ static IUnknown *s_CreateInstance(CLSID *pCLSID, IID *iid) {
 }
 
 static ptr s_ErrorString(DWORD dwMessageId) {
-    char *lpMsgBuf;
+    return s_ErrorStringImp(dwMessageId, NULL);
+}
+
+static ptr s_ErrorStringImp(DWORD dwMessageId, const char *lpcDefault) {
+    wchar_t *lpMsgBuf;
     DWORD len;
+    char *u8str;
     ptr result;
 
-    len = FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                        NULL, dwMessageId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPTSTR)&lpMsgBuf, 0, NULL);
-    /* If FormatMessage fails, use the error code in hexadecimal. */
+    len = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                         NULL, dwMessageId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&lpMsgBuf, 0, NULL);
+    /* If FormatMessage fails... */
     if (len == 0) {
-#define HEXERRBUFSIZ ((sizeof(dwMessageId) * 2) + 3)
-        char hexerrbuf[HEXERRBUFSIZ];
-        snprintf(hexerrbuf, HEXERRBUFSIZ, "0x%x", dwMessageId);
-        return Sstring(hexerrbuf);
-#undef HEXERRBUFSIZ
+        if (lpcDefault) {
+            /* ... use the default string if provided... */
+            return Sstring_utf8(lpcDefault, -1);
+        } else {
+            /* ...otherwise, use the error code in hexadecimal. */
+            char buf[(sizeof(dwMessageId) * 2) + 3];
+            int n = snprintf(buf, sizeof(buf), "0x%lx", dwMessageId);
+            if ((unsigned)n < sizeof(buf))
+                return Sstring_utf8(buf, n);
+            else
+                return Sstring("??");
+        }
     }
-    /* Otherwise remove trailing newlines & returns and strip trailing period. */
+    /* Otherwise remove trailing newlines & returns and strip trailing period, if present. */
     while (len > 0) {
-        char c = lpMsgBuf[len - 1];
-        if (c == '\n' || c == '\r')
+        wchar_t c = lpMsgBuf[len - 1];
+        if (c == L'\n' || c == '\r')
             len--;
-        else if (c == '.') {
+        else if (c == L'.') {
             len--;
             break;
         }
         else break;
     }
-    result = Sstring_of_length(lpMsgBuf, len);
+    lpMsgBuf[len] = 0;
+    u8str = Swide_to_utf8(lpMsgBuf);
     LocalFree(lpMsgBuf);
+    result = Sstring_utf8(u8str, -1);
+    free(u8str);
     return result;
 }
 
@@ -307,7 +353,7 @@ int S_windows_open_exclusive(char *who, char *path, int flags) {
 }
 #endif
 
-#include <Winbase.h>
+#include <winbase.h>
 
 /* primitive version of flock compatible with Windows 95/98/ME.  A better
    version could be implemented for Windows NT/2000/XP using LockFileEx. */
@@ -397,7 +443,20 @@ int S_windows_rmdir(const char *pathname) {
 
 int S_windows_stat64(const char *pathname, struct STATBUF *buffer) {
   wchar_t wpathname[PATH_MAX];
-  if (MultiByteToWideChar(CP_UTF8,0,pathname,-1,wpathname,PATH_MAX) == 0)
+  int len = MultiByteToWideChar(CP_UTF8,0,pathname,-1,wpathname,PATH_MAX);
+
+# ifdef __MINGW32__
+  /* MinGW _wstat64 does not want path separators at the end, except for 
+     a drive: */
+  while ((len > 2)
+	 && ((wpathname[len-2] == '/')
+	     || (wpathname[len-2] == '\\'))
+	 && (wpathname[len-3] != ':')) {
+    wpathname[(--len)-1] = 0;
+  }
+# endif
+
+  if (len == 0)
     return _stat64(pathname, buffer);
   else
     return _wstat64(wpathname, buffer);
@@ -429,7 +488,7 @@ int S_windows_unlink(const char *pathname) {
   }
 }
 
-char *S_windows_getcwd(char *buffer, int maxlen) {
+char *S_windows_getcwd(char *buffer, UNUSED int maxlen) {
   wchar_t wbuffer[PATH_MAX];
   if (_wgetcwd(wbuffer, PATH_MAX) == NULL) return NULL;
   if (WideCharToMultiByte(CP_UTF8,0,wbuffer,-1,buffer,PATH_MAX,NULL,NULL) == 0) {

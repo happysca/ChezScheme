@@ -18,17 +18,17 @@
     (define (mat-id? x)
       (memq x
         '(equivalent-expansion? mat-run mat mat/cf
-           mat-file mat-output enable-cp0 windows? embedded?
-           *examples-directory* *scheme*
+           mat-file mat-output enable-cp0 windows? embedded? pb?
+           *scheme* *mats-dir*
            *fuzz* ~= fl~= cfl~= == nan pi +pi +pi/2 +pi/4 -pi -pi/2 -pi/4 +e -e
            separate-eval-tools separate-compile separate-eval run-script patch-exec-path $record->vector
            $cat_flush
            test-cp0-expansion
-           mkfile rm-rf touch
+           mkfile rm-rf touch find-source path-build-normal path-equal?
            heap-check-interval
            preexisting-profile-dump-entry?
            coverage-table record-run-coverage load-coverage-files combine-coverage-files coverage-percent
-           parameters)))
+           parameters retry-for-spurious)))
     (define (canonical-label x)
       (let ([s (symbol->string x)])
         (#%$intern3 (format "~a*top*:~a" s s) (string-length s) (+ 6 (* 2 (string-length s))))))
@@ -162,7 +162,15 @@
             0 a*))
         (define prim-arity
           (lambda (x)
-            (module (primref-arity) (include "../s/primref.ss"))
+            (module (primref-arity)
+              (define-syntax include-from-s
+                (lambda (x)
+                  (syntax-case x ()
+                    [(k ?path)
+                     (string? (datum ?path))
+                     (let ([s-path (find-source (datum ?path))])
+                       (datum->syntax #'k `(include ,s-path)))])))
+              (include-from-s "primref.ss"))
             (let ([primref2 (#%$sgetprop x '*prim2* #f)] [primref3 (#%$sgetprop x '*prim3* #f)])
               (if primref2
                   (if primref3
@@ -196,12 +204,13 @@
                           (let ([unprefixed (#%$sgetprop prim '*unprefixed* prim)])
                             (prefix=? (format "(~s" unprefixed) (car args))))))))
         (define (check prim n)
-          (let ([call `(,prim ,@(make-list n `',(void)))])
+        (void)
+          (let ([call `(($primitive ,prim) ,@(make-list n `',(void)))])
             (unless (guard (c [else (okay-condition? prim c)])
                       (eval `(begin ,call #f)))
               (set! oops #t)
               (printf "no argcount error for ~s\n" call)))
-          (let ([call `(,prim ,@(make-list n '(void)))])
+          (let ([call `(($primitive ,prim) ,@(make-list n '(void)))])
             (define (write-and-load x)
               (with-output-to-file "testfile.ss"
                 (lambda () (pretty-print x))
@@ -220,7 +229,7 @@
           (lambda (prim)
             (let ([mask (prim-arity prim)])
               (when mask
-                (let ([pam (procedure-arity-mask (top-level-value prim (scheme-environment)))])
+                (let ([pam (procedure-arity-mask (eval `($primitive ,prim)))])
                   (unless (= mask pam)
                     (printf "primref arity mask ~s differs from procedure-arity-mask return value ~s for ~s\n"
                       mask pam prim)
@@ -254,8 +263,7 @@
         ;    warning conditions, non-violation conditions, and invalid memory references.
         (meta define feature*
           (call-with-port
-            (open-input-file (let ([fn (format "../s/~a.def" (machine-type))])
-                               (if (file-exists? fn) fn (format "../~a" fn))))
+            (open-input-file (find-source "machine.def"))
             (lambda (ip)
               (let loop ()
                 (let ([x (read ip)])
@@ -291,13 +299,14 @@
                        [((in ...) ...) #`(((in ...) #,outs) ...)])))
                  (define do-entry
                    (lambda (x)
-                     (syntax-case x (feature sig flags ->)
+                     (syntax-case x (feature sig pred flags ->)
                        [(prim [feature f] . more)
                         (if (memq (datum f) feature*)
                             (do-entry #'(prim . more))
                             #'(void))]
                        [(prim [flags flag ...]) (do-entry #'(prim [sig] [flags flag ...]))]
-                       [(prim [sig [(in ...) ... -> (out ...)] ...] [flags flag ...])
+                       [(prim [sig sigs ...] [flags flag ...]) (do-entry #'(prim [sig sigs ...] [pred #f] [flags flag ...]))]
+                       [(prim [sig [(in ...) ... -> (out ...)] ...] [pred p] [flags flag ...])
                         (with-syntax ([(unprefixed . prim) (prim-name #'prim)])
                           (with-syntax ([((((in ...) (out ...)) ...) ...)
                                          (map ins-and-outs #'(((in ...) ...) ...) #'((out ...) ...))])
@@ -331,11 +340,17 @@
               (def *textual-port textual-output-port))
             (def *cost-center (make-cost-center))
             (def *date (current-date))
+            (def *phantom-bytevector (make-phantom-bytevector 10))
+            (def *pseudo-random-generator (make-pseudo-random-generator))
             (def *eq-hashtable (make-eq-hashtable))
             (def *ftype-pointer (make-ftype-pointer double 0))
             (def *symbol-hashtable (make-hashtable symbol-hash eq?))
             (def *genny (gensym))
             (def *old-hash-table (make-hash-table))
+            (def *immutable-bpx (box-immutable 'a))
+            (def *immutable-bytevector (bytevector->immutable-bytevector '#vu8(0)))
+            (def *immutable-string (string->immutable-string "a"))
+            (def *immutable-vector (vector->immutable-vector '#(a)))
             (let ()
               (define rtd (make-record-type-descriptor 'foo #f #f #f #f '#((mutable x))))
               (define rcd (make-record-constructor-descriptor rtd #f #f))
@@ -378,6 +393,7 @@
               [(boolean) #f '()]
               [(box) &a '((a)) #f]
               [(bytevector) '#vu8(0) "a" #f]
+              [(sub-bytevector) no-good]
               [(cflonum) 0.0+1.0i 0 'a #f]
               [(char) #\a 0 #f]
               [(codec) (latin-1-codec) 0 #f]
@@ -385,28 +401,51 @@
               [(compile-time-value) (make-compile-time-value 17) #f]
               [(condition) (make-who-condition 'me) 'the-who #f]
               [(continuation-condition) (call/cc make-continuation-condition) (make-who-condition 'who) #f]
+              [(continuation-marks) (current-continuation-marks) 8 #f]
               [(cost-center) *cost-center '(a) #f]
               [(source-table) (make-source-table) *time #f]
               [(date) *date *time #f]
+              [(dreal) 0 1/2 1 1+2i +nan.0 #f]
               [(endianness) 'big 'giant #f]
               [(enum-set) (file-options compressed) 0 #f]
               [(environment) *env '((a . b)) #f]
               [(eq-hashtable) *eq-hashtable *symbol-hashtable #f]
+              [(even) 2 1 .5 1/2 2+2i #f]
               [(exact-integer) (- (most-negative-fixnum) 1) 2.0 1/2 #f]
+              [(exact-real) 1/2 1+1i 2.0 #f]
+              [(exact-uinteger) (+ (most-positive-fixnum) 1) -10 2.0 1/2 #f]
               [(exception-state) (current-exception-state) 0 #f]
+              [(eof/char) #\a 0 #f]
+              [(eof/u8) 0 -1 (expt 2 8) "a" #f]
               [(fasl-strip-options) (fasl-strip-options inspector-source) (file-options compressed) #f]
               [(file-options) (file-options compressed) 1/2 #f]
               [(fixnum) -1 'q (+ (most-positive-fixnum) 1) (- (most-negative-fixnum) 1) #f]
+              [(fleven) 2.0 2 2.0+2.0i 'a #f]
+              [(flinteger) 0.0 0 0.5 0.0+1.0i 'a #f]
+              [(flodd) 1.0 1 1.0+1.0i 'a #f]
               [(flonum) 0.0 0 0.0+1.0i 'a #f]
+              [(flrational) 0.5 1/2 1+2i +inf.0 #f]
+              [(flvector) '#vfl(0.0) "a" #f]
+              [(flzero) 0.0 0 "a" #f]
               [(ftype-pointer) *ftype-pointer 0 *time #f]
+              [(sub-ftype-pointer) no-good]
+              [(fxeven) 2 2.0 2+2i 'a #f]
+              [(fxodd) 1 1.0 1+1i 'a #f]
               [(fxvector) '#vfx(0) "a" #f]
+              [(fxzero) 0 0.0 "a" #f]
               [(gensym) *genny 'sym #f]
               [(guardian) (make-guardian) values "oops" #f]
               [(hashtable) *eq-hashtable '((a . b)) #f]
               [(identifier) #'x 'x 17 #f]
+              [(immutable-box) *immutable-box &a '((a)) #f]
+              [(immutable-bytevector) *immutable-bytevector '#vu8(0) "a" #f]
+              [(immutable-string) *immutable-string "a" 'a #f]
+              [(immutable-vector) *immutable-vector '#(a) "a" #f]
               [(import-spec) '(chezscheme) 0 '(a . b) #f]
+              [(infinite) +inf.0 +nan.0 +inf.0+inf.0i 0.0 0 "a" #f]
               [(input-port) (current-input-port) 0 *binary-output-port *textual-output-port #f]
               [(integer) 0.0 1/2 1.0+0.0i 'a #f]
+              [(integer-valued) 0.0+0.0i 1/2 1.0+1.0i 'a #f]
               [(i/o-encoding-error) (make-i/o-encoding-error 17 23) (make-who-condition 'who) 1/2 #f]
               [(i/o-filename-error) (make-i/o-filename-error 17) (make-who-condition 'who) 3 #f]
               [(i/o-invalid-position-error) (make-i/o-invalid-position-error 17) (make-who-condition 'who) "" #f]
@@ -420,6 +459,7 @@
               [(list-of-symbols) '(a b c) '("a") #f]
               [(maybe-binary-output-port) *binary-output-port *binary-input-port (current-output-port)]
               [(maybe-char) #\a 0]
+              [(maybe-force-host-out?) #t 0]
               [(maybe-pathname) "a" 'a]
               [(maybe-procedure) values 0]
               [(maybe-rtd) *rtd *record ""]
@@ -431,21 +471,39 @@
               [(maybe-transcoder) (native-transcoder) 0]
               [(maybe-ufixnum) 0 -1 (+ (most-positive-fixnum) 1) 'a]
               [(maybe-uint) 0 -1 'a]
+              [(maybe-who) 'who 17]
               [(maybe-timeout) *time 371]
               [(message-condition) (make-message-condition 17) (make-who-condition 'who) 'q #f]
-              [(number) 1+2i 'oops #f]
-              [(nzuint) 1 0 'a #f]
+              [(nan) +nan.0 +inf.0 +nan.0+nan.0i 0.0 0 "a" #f]
+              [(nfixnum) -1 'q (+ (most-positive-fixnum) 1) (- (most-negative-fixnum) 1) #f]
+              [(nflonum) -1.0 0.0 0 0.0+1.0i 'a #f]
+              [(nonempty-bytevector) '#vu8(0) '#vu8() "a" #f]
+              [(nonempty-flvector) '#vfl(0.0) '#vfl() "a" #f]
+              [(nonempty-fxvector) '#vfx(0) '#vfx() "a" #f]
+              [(nonempty-string) "a" "" 'a #f]
+              [(nonempty-vector) '#(a) '#() "a" #f]
+              [(nreal) -1/2 0 1 1+2i +nan.0 #f]
+              [(number) 1+2i 'oops #f]           
+              [(odd) 1 2 .5 1/2 2+2i #f]
               [(old-hash-table) *old-hash-table '((a . b)) #f]
               [(output-port) (current-output-port) 0 *binary-input-port *textual-input-port #f]
               [(pair) '(a . b) 'a #f]
               [(pathname) "a" 'a #f]
+              [(pbignum) (+ (most-positive-fixnum) 1) -1 (most-positive-fixnum) 2.0 1/2 #f]
               [(pfixnum) 1 0 #f]
+              [(pflonum) 1.0 0.0 0 0.0+1.0i 'a #f]
+              [(phantom-bytevector) *phantom-bytevector '#vu8(0) #f]
+              [(pint) 1 0 'a #f]
               [(port) (current-input-port) 0 #f]
+              [(preal) 1/2 0 -1 1+2i +nan.0 #f]
               [(procedure) values 0 #f]
+              [(pseudo-random-generator) *pseudo-random-generator #f]
               [(ptr) 1.0+2.0i]
               [(rational) 1/2 1+2i #f]
+              [(rational-valued) 0.5+0.0i 1+2i #f]
               [(rcd) *rcd *rtd "" #f]
               [(real) 1/2 1+2i #f]
+              [(real-valued) +inf.0+0.0i 1+2i #f]
               [(record) *record '#(a) #f]
               [(rtd) *rtd *record "" #f]
               [(s16) -1 'q (expt 2 15) (- -1 (expt 2 15)) #f]
@@ -462,8 +520,9 @@
               [(source-object) *source-object '#&a #f]
               [(sstats) *sstats '#(0 2 7 3) #f]
               [(string) "a" 'a #f]
+              [(string/bytevector) no-good]
               [(sub-ptr) no-good]
-              [(sub-uint sub-ufixnum sub-index sub-length sub-list sub-fixnum sub-flonum sub-integer sub-number sub-port sub-rtd sub-sint sub-string sub-symbol sub-textual-output-port sub-vector) no-good #!eof #f]
+              [(sub-uint sub-ufixnum sub-index sub-length sub-real sub-list sub-fixnum sub-flonum sub-integer sub-number sub-port sub-rtd sub-sint sub-string sub-symbol sub-textual-output-port sub-vector) no-good #!eof #f]
               [(maybe-sub-rcd maybe-sub-symbol) no-good #!eof]
               [(symbol) 'a 0 "a" #f]
               [(symbol-hashtable) *symbol-hashtable *eq-hashtable '() #f]
@@ -488,9 +547,13 @@
               [(uinteger) 9.0 -1 -1.0 'a #f]
               [(uptr) 0 -1 'a (+ *max-uptr 1) #f]
               [(uptr/iptr) -1 'q (+ *max-uptr 1) (- *min-iptr 1) #f]
+              [(ureal) 0 -1/2 -1 1+2i +nan.0 #f]
               [(vector) '#(a) "a" #f]
+              [(stencil-vector) (stencil-vector 7 1 2 3) "a" #f]
               [(who-condition) (make-who-condition 'me) (make-message-condition "hello") 'the-who #f]
-              [(who) 'who 17])
+              [(zero) 0 1 1.0 "a" #f]
+              [($exactnum) 1+1i 1.0+1.0i 1 1.0 'a #f]
+              [($inexactnum) 1.0+1.0i 1+1i 1 1.0 'a #f])
             (meta-cond
               [(memq 'pthreads feature*)
                (declare-types
@@ -534,7 +597,8 @@
                            (lambda (good.bad*)
                              (loop in* (cons (car good.bad*) rgood*) (cons (cdr good.bad*) rbad**)))]
                           [else (errorf 'fuzz-prim-args "unhandled type ~s" in)])))))))
-          (when (flags-set? primitive proc)
+          (when (and (flags-set? primitive proc)
+                     (not (flags-set? system proc)))
             (for-each
               (lambda (in*)
                 (good/bad in*
@@ -625,7 +689,11 @@
                                                                              "invalid palette ~s"
                                                                              "bit argument ~s is not 0 or 1"
                                                                              "unrecognized type ~s"
-                                                                             "invalid code page ~s")))
+                                                                             "invalid code page ~s"
+                                                                             "invalid mask ~s"
+                                                                             "invalid removal mask ~s"
+                                                                             "invalid addition mask ~s"
+                                                                             "invalid field count ~s")))
                                                                     (equal? (condition-irritants c) (list bad)))
                                                                (and (or (member (condition-message c)
                                                                           '("~s is not a valid index for ~s"
@@ -648,9 +716,14 @@
                             (car bad**)))
                         (loop (cdr good*) (cdr bad**) (cons (car good*) rgood*)))))))
               (map car in*/out**))))
-        (meta-cond
-          [(file-exists? "../s/primdata.ss") (include "../s/primdata.ss")]
-          [else (include "../../s/primdata.ss")])
+        (define-syntax include-from-s
+          (lambda (x)
+            (syntax-case x ()
+              [(k ?path)
+               (string? (datum ?path))
+               (let ([s-path (find-source (datum ?path))])
+                 (datum->syntax #'k `(include ,s-path)))])))
+        (include-from-s "primdata.ss")
         #t))
 )
 
@@ -761,6 +834,19 @@
    (error? (collect-generation-radix 'a))
    (error? (collect-generation-radix -1))
    (error? (collect-generation-radix 0))
+ )
+
+(mat collect-maximum-generation-threshold-factor
+   (real? (collect-maximum-generation-threshold-factor))
+   (not (negative? (collect-maximum-generation-threshold-factor)))
+   (ok collect-maximum-generation-threshold-factor 0)
+   (ok collect-maximum-generation-threshold-factor 1)
+   (ok collect-maximum-generation-threshold-factor 2)
+   (ok collect-maximum-generation-threshold-factor 0.5)
+   (ok collect-maximum-generation-threshold-factor 1/2)
+   (error? (collect-maximum-generation-threshold-factor 'a))
+   (error? (collect-maximum-generation-threshold-factor -1))
+   (error? (collect-maximum-generation-threshold-factor 1+2i))
  )
 
 (mat collect-notify

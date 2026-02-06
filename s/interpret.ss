@@ -1,4 +1,3 @@
-"interpret.ss"
 ;;; interpret.ss
 ;;; Copyright 1984-2017 Cisco Systems, Inc.
 ;;; 
@@ -95,7 +94,7 @@
             (lambda (ids vals body)
               (if (null? ids)
                   body
-                  `(call ,(make-preinfo)
+                  `(call ,(make-preinfo-call)
                      (case-lambda ,(make-preinfo-lambda)
                        (clause (,ids ...) ,(length ids) ,body))
                      ,vals ...))))
@@ -332,7 +331,17 @@
                                (min (if (fx< interface 0)
                                         (fx- -1 interface)
                                         interface)
-                                 m))])))))
+                                    m))]))))
+                 (arity-mask (let mask ((cl* cl*) (arity-mask 0))
+                               (if (null? cl*)
+                                   arity-mask
+                                   (nanopass-case (Linterp CaseLambdaClause) (car cl*)
+                                     [(clause (,x* ...) ,interface ,body)
+                                      (mask (cdr cl*)
+                                            (logor arity-mask
+                                                   (if (< interface 0)
+                                                       (- (ash 1 (- -1 interface)))
+                                                       (ash 1 interface))))])))))
              (define adjust-interface
                (lambda (x)
                  (if (fx< x 0)
@@ -355,18 +364,24 @@
                  [(0)
                   (ip2-closure free
                     ($rt lambda ()
-                      (lambda args
-                        ($rt body ([a0 0] [a1 0] [fp 0]) args (length args)))))]
+                      ($make-wrapper-procedure
+                       (lambda args
+                         ($rt body ([a0 0] [a1 0] [fp 0]) args (length args)))
+                       arity-mask)))]
                  [(1)
                   (ip2-closure free
                     ($rt lambda ()
-                      (lambda (a0 . args)
-                        ($rt body ([a1 0] [fp 0]) args (length args)))))]
+                      ($make-wrapper-procedure
+                       (lambda (a0 . args)
+                         ($rt body ([a1 0] [fp 0]) args (length args)))
+                       arity-mask)))]
                  [(2)
                   (ip2-closure free
                     ($rt lambda ()
-                      (lambda (a0 a1 . args)
-                        ($rt body ([fp 0]) args (length args)))))]))))]
+                      ($make-wrapper-procedure
+                       (lambda (a0 a1 . args)
+                         ($rt body ([fp 0]) args (length args)))
+                       arity-mask)))]))))]
       [(set! ,x ,e)
        (let ((e (ip2 e)))
          (let ((loc (c-var-loc x)) (i (c-var-index x)))
@@ -645,6 +660,11 @@
           (c-var-index-set! (car vars) i)
           (loop (cdr vars) regs (fx+ i 1))])))))
 
+(define (cptypes x)
+  (if (enable-type-recovery)
+      ($cptypes x))
+      x)
+
 (define-pass interpret-Lexpand : Lexpand (ir situation for-import? importer ofn eoo) -> * (val)
   (definitions
     (define (ibeval x1)
@@ -709,6 +729,6 @@
 (set! $interpret-backend
   (lambda (x situation for-import? importer ofn)
     (interpret-Lexpand x situation for-import? importer ofn (expand/optimize-output))))
+(current-eval interpret)
 )
 
-(current-eval interpret)

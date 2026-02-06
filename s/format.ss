@@ -1,4 +1,3 @@
-"format.ss"
 ;;; format.ss
 ;;; Copyright 1984-2017 Cisco Systems, Inc.
 ;;; 
@@ -51,7 +50,7 @@
 ;;;  we insist on real argument for ~f, ~e, and ~g; common lisp is
 ;;;    lax and sends off anything else to ~D.
 
-;;; other notees
+;;; other notes
 ;;;  we always assume that format starts at the beginning of a line
 ;;;    in support of ~&, ~t, and ~<...>
 
@@ -214,7 +213,7 @@
                 [(#\,) (state s4-comma () (fx+ i 1) b '(#f))]
                 [(#\') (state s4-quote () (fx+ i 1) b '())]
                 [(#\#) (state s4-after-param () (fx+ i 1) b '(hash))]
-                [(#\v) (state s4-after-param ([nargs (bump nargs 1)]) (fx+ i 1) b '(v))]
+                [(#\v #\V) (state s4-after-param ([nargs (bump nargs 1)]) (fx+ i 1) b '(v))]
                 [else (state s5 () i b '())]))))
         (define s4-sign
           (state lambda (i b p* bp)
@@ -254,7 +253,7 @@
                 [(#\,) (state s4-comma () (fx+ i 1) b (cons #f p*))]
                 [(#\') (state s4-quote () (fx+ i 1) b p*)]
                 [(#\#) (state s4-after-param () (fx+ i 1) b (cons 'hash p*))]
-                [(#\v) (state s4-after-param ([nargs (bump nargs 1)]) (fx+ i 1) b (cons 'v p*))]
+                [(#\v #\V) (state s4-after-param ([nargs (bump nargs 1)]) (fx+ i 1) b (cons 'v p*))]
                 [else (state s5 () i b (reverse (cons #f p*)))]))))
         (define s5
           (state lambda (i b p*)
@@ -766,25 +765,26 @@
                 (let ([cmd (car cmd*)] [cmd* (cdr cmd*)])
                   (cond
                     [(string? cmd)
-                     (make-seq (make-call src display-string (build-quote cmd)  op)
+                     (make-seq (make-call src display-string (build-quote cmd) op)
                        (f cmd* arg* #f))]
                     [(char? cmd)
-                     (make-seq (make-call src write-char (build-quote cmd)  op)
+                     (make-seq (make-call src write-char (build-quote cmd) op)
                        (f cmd* arg* #f))]
                     [(fmt? cmd)
-                     (fmt-case cmd
-                       [simple-display ()
-                         (make-seq (make-call src display (car arg*) op)
-                           (f cmd* (cdr arg*) #f))]
-                       [simple-write ()
-                         (make-seq (make-call src write (car arg*) op)
-                           (f cmd* (cdr arg*) #f))]
-                       [cwrite (colon? at?)
-                         (and (not colon?)
-                              (not at?)
-                              (make-seq (make-call src write-char (car arg*) op)
-                                (f cmd* (cdr arg*) #f)))]
-                       [else #f])]
+                     (and (not (null? arg*))
+                          (fmt-case cmd
+                            [simple-display ()
+                              (make-seq (make-call src display (car arg*) op)
+                                (f cmd* (cdr arg*) #f))]
+                            [simple-write ()
+                              (make-seq (make-call src write (car arg*) op)
+                                (f cmd* (cdr arg*) #f))]
+                            [cwrite (colon? at?)
+                              (and (not colon?)
+                                   (not at?)
+                                   (make-seq (make-call src write-char (car arg*) op)
+                                     (f cmd* (cdr arg*) #f)))]
+                            [else #f]))]
                     [else ($oops 'fmt->expr "internal error: ~s" cmd)])))))))
 
   ;;; perform formatting operation from parsed string (cmd*)

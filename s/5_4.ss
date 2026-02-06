@@ -1,13 +1,12 @@
-"5_4.ss"
 ;;; 5_4.ss
 ;;; Copyright 1984-2017 Cisco Systems, Inc.
-;;; 
+;;;
 ;;; Licensed under the Apache License, Version 2.0 (the "License");
 ;;; you may not use this file except in compliance with the License.
 ;;; You may obtain a copy of the License at
-;;; 
+;;;
 ;;; http://www.apache.org/licenses/LICENSE-2.0
-;;; 
+;;;
 ;;; Unless required by applicable law or agreed to in writing, software
 ;;; distributed under the License is distributed on an "AS IS" BASIS,
 ;;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +15,14 @@
 
 ;;; character and string functions
 
+;;; The functions that use `$make-uninitialized-string` may leave around
+;;; ill-formed strings if interrupted. Those strings could then be
+;;; discovered by someone inspecting the continuation. For now we've
+;;; decided against disabling interrupts in those places since it's
+;;; likely that the same thing happens in other places and it's not
+;;; worth the performance hit.
+
+(begin
 (define substring
    (lambda (s1 m n)
       (unless (string? s1)
@@ -25,35 +32,53 @@
             ($oops 'substring
                    "~s and ~s are not valid start/end indices for ~s"
                    m n s1))
-         (let ([s2 (make-string (fx- n m))])
-            (do ([j 0 (fx+ j 1)] [i m (fx+ i 1)])
-                ((fx= i n) s2)
-                (string-set! s2 j (string-ref s1 i)))))))
+         (let ([s2 ($make-uninitialized-string (fx- n m))])
+           (do ([j 0 (fx+ j 1)] [i m (fx+ i 1)])
+               ((fx= i n) s2)
+             (string-set! s2 j (string-ref s1 i)))))))
 
-(define-who string-append
-  (case-lambda
-    [(s1 s2)
-     (unless (string? s1) ($oops who "~s is not a string" s1))
-     (unless (string? s2) ($oops who "~s is not a string" s2))
-     (let ([n1 (string-length s1)] [n2 (string-length s2)])
-       (let ([n (+ n1 n2)])
-         (unless (fixnum? n) ($oops who "result string size ~s is not a fixnum" n))
-         (let ([s (make-string n)])
-           (string-copy! s1 0 s 0 n1)
-           (string-copy! s2 0 s n1 n2)
-           s)))]
-    [args
-     (let f ([ls args] [n 0])
-       (if (null? ls)
-           (if (fixnum? n)
-               (make-string n)
-               ($oops who "result string size ~s is not a fixnum" n))
-           (let ([s1 (car ls)])
-             (unless (string? s1) ($oops who "~s is not a string" s1))
-             (let ([m (string-length s1)])
-               (let ([s2 (f (cdr ls) (+ n m))])
-                 (string-copy! s1 0 s2 n m)
-                 s2)))))]))
+(let ()
+  (define do-string-append2
+    (lambda (who s1 s2)
+      (unless (string? s1) ($oops who "~s is not a string" s1))
+      (unless (string? s2) ($oops who "~s is not a string" s2))
+      (let ([n1 (string-length s1)] [n2 (string-length s2)])
+        (let ([n (+ n1 n2)])
+          (unless (fixnum? n) ($oops who "result string size ~s is not a fixnum" n))
+          (let ([s ($make-uninitialized-string n)])
+            (string-copy! s1 0 s 0 n1)
+            (string-copy! s2 0 s n1 n2)
+            s)))))
+
+  (define do-string-append
+    (lambda (who args)
+      (let f ([ls args] [n 0])
+        (if (null? ls)
+            (if (fixnum? n)
+                ($make-uninitialized-string n)
+                ($oops who "result string size ~s is not a fixnum" n))
+            (let ([s1 (car ls)])
+              (unless (string? s1) ($oops who "~s is not a string" s1))
+              (let ([m (string-length s1)])
+                (let ([s2 (f (cdr ls) (+ n m))])
+                  (string-copy! s1 0 s2 n m)
+                  s2)))))))
+
+  (define (immutable! str)
+    (cond
+     [(eqv? str "") (string->immutable-string "")]
+     [else ($string-set-immutable! str)
+           str]))
+
+  (set-who! string-append
+    (case-lambda
+     [(s1 s2) (do-string-append2 who s1 s2)]
+     [args (do-string-append who args)]))
+
+  (set-who! string-append-immutable
+    (case-lambda
+     [(s1 s2) (immutable! (do-string-append2 who s1 s2))]
+     [args (immutable! (do-string-append who args))])))
 
 (define string->list
    (lambda (s)
@@ -71,24 +96,24 @@
 
 (define list->string
    (lambda (x)
-      (let ([s (make-string ($list-length x 'list->string))])
-         (do ([ls x (cdr ls)] [i 0 (fx+ i 1)])
-             ((null? ls) s)
-             (let ([c (car ls)])
-                (unless (char? c)
-                   ($oops 'list->string "~s is not a character" c))
-                (string-set! s i c))))))
+     (let ([s ($make-uninitialized-string ($list-length x 'list->string))])
+       (do ([ls x (cdr ls)] [i 0 (fx+ i 1)])
+           ((null? ls) s)
+         (let ([c (car ls)])
+           (unless (char? c)
+             ($oops 'list->string "~s is not a character" c))
+           (string-set! s i c))))))
 
 (define-who string-copy
   (lambda (s1)
     (unless (string? s1)
       ($oops who "~s is not a string" s1))
     (let ([n (string-length s1)])
-      (let ([s2 (make-string n)])
+      (let ([s2 ($make-uninitialized-string n)])
         ($byte-copy!
-          s1 (constant string-data-disp)
-          s2 (constant string-data-disp)
-          (fx* n (constant string-char-bytes)))
+         s1 (constant string-data-disp)
+         s2 (constant string-data-disp)
+         (fx* n (constant string-char-bytes)))
         s2))))
 
 (define-who string-copy!
@@ -113,7 +138,7 @@
   (lambda (v)
     (cond
       [(immutable-string? v) v]
-      [(eqv? v "") ($tc-field 'null-immutable-string ($tc))]
+      [(eqv? v "") (string->immutable-string "")]
       [else
        (unless (string? v) ($oops who "~s is not a string" v))
        (let ([v2 (string-copy v)])
@@ -179,28 +204,28 @@
 
 ;;; Copyright (C) 2008  Abdulaziz Ghuloum, R. Kent Dybvig
 ;;; Copyright (C) 2006,2007  Abdulaziz Ghuloum
-;;; 
+;;;
 ;;; Permission is hereby granted, free of charge, to any person obtaining a
 ;;; copy of this software and associated documentation files (the "Software"),
 ;;; to deal in the Software without restriction, including without limitation
 ;;; the rights to use, copy, modify, merge, publish, distribute, sublicense,
 ;;; and/or sell copies of the Software, and to permit persons to whom the
 ;;; Software is furnished to do so, subject to the following conditions:
-;;; 
+;;;
 ;;; The above copyright notice and this permission notice shall be included in
 ;;; all copies or substantial portions of the Software.
-;;; 
+;;;
 ;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 ;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 ;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
 ;;; THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 ;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 ;;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-;;; DEALINGS IN THE SOFTWARE. 
+;;; DEALINGS IN THE SOFTWARE.
 
 (let ()
-  (include "../unicode/unicode-char-cases.ss")
-  (include "../unicode/unicode-charinfo.ss")
+  (include "unicode-char-cases.ss")
+  (include "unicode-charinfo.ss")
 
   (define char-error
     (lambda (who what)
@@ -218,10 +243,10 @@
         [(_ name unsafe-op)
          (set-who! name
            (lambda (c)
-             (if (char? c) 
+             (if (char? c)
                  (unsafe-op c)
                  ($oops who "~s is not a character" c))))]))
-    
+
     (define-char-op char-upcase $char-upcase)
     (define-char-op char-downcase $char-downcase)
     (define-char-op char-titlecase $char-titlecase)
@@ -235,6 +260,9 @@
     (define-char-op char-general-category $char-category)
     (define-char-op $constituent? $char-constituent?)
     (define-char-op $subsequent? $char-subsequent?)
+    (define-char-op char-extended-pictographic? $char-extended-pictographic?)
+    (define-char-op char-grapheme-break-property $char-grapheme-break-property)
+    (define-char-op char-indic-break-property $char-indic-break-property)
   )
 
   (let ()
@@ -300,11 +328,11 @@
   )
 
   (let ()
-    (define (handle-special str ac) 
+    (define (handle-special str ac)
       (define (chars ac n)
         (cond
           [(null? ac) n]
-          [else 
+          [else
            (chars (cdr ac)
              (let f ([p (cdar ac)] [n n])
                (cond
@@ -313,18 +341,18 @@
       (define (extend src ac src-len dst-len)
         (let f ([str str] [dst (make-string dst-len)] [i 0] [j 0] [ac (reverse ac)] [sigma* '()])
           (cond
-            [(null? ac) 
+            [(null? ac)
              (string-copy! str i dst j (fx- src-len i))
              (do-sigmas dst sigma*)]
             [else
              (let ([idx (caar ac)] [c* (cdar ac)] [ac (cdr ac)])
                (let ([cnt (fx- idx i)])
                  (string-copy! str i dst j cnt)
-                 (let g ([str str]       [dst dst] 
-                         [i (fx+ i cnt)] [j (fx+ j cnt)] 
-                         [ac ac]         [c* c*]) 
+                 (let g ([str str]       [dst dst]
+                         [i (fx+ i cnt)] [j (fx+ j cnt)]
+                         [ac ac]         [c* c*])
                    (cond
-                     [(pair? c*) 
+                     [(pair? c*)
                       (string-set! dst j (car c*))
                       (g str dst i (fx+ j 1) ac (cdr c*))]
                      [(char? c*)
@@ -356,8 +384,8 @@
       (let ([n (string-length str)])
         (let f ([str str] [dst (make-string n)] [i 0] [n n] [ac '()])
           (cond
-            [(fx= i n) 
-             (if (null? ac) 
+            [(fx= i n)
+             (if (null? ac)
                  dst
                  (handle-special dst ac))]
             [else
@@ -367,7 +395,7 @@
                   (string-set! dst i c/ls)
                   (f str dst (fx+ i 1) n ac)]
                  [else
-                  (f str dst (fx+ i 1) n 
+                  (f str dst (fx+ i 1) n
                      (cons (cons i c/ls) ac))]))]))))
 
     (set-who! string-upcase
@@ -403,9 +431,11 @@
           (define (trans s i c seen-cased? ac)
             (if seen-cased?
                 (trans1 s i ($str-downcase c) #t ac)
-                (if ($char-cased? c)
-                    (trans1 s i ($str-titlecase c) #t ac)
-                    (trans1 s i c #f ac))))
+                (let ([tc ($str-titlecase c)])
+                  (if (or ($char-cased? c)
+                          (not (eqv? c tc)))
+                      (trans1 s i tc #t ac)
+                      (trans1 s i c #f ac)))))
           ; NB: if used as a pattern for word breaking, take care not to break between CR & LF (WB3)
           ; NB: and between regional-indicators (WB13c).  also take care not to let handling of WB6 and
           ; NB: WB7 here prevent breaks in, e.g., "a." when not followed by, e.g., another letter.
@@ -423,6 +453,7 @@
                         (if (fx= i n)
                             (handle-special dst ac)
                             (s0 i ac)))])))
+          (define (extend-format-zwj? c) (or ($wb-extend? c) ($wb-format? c) ($wb-zwj? c)))
           (define (sAletter i seen-cased? ac)
             (let ([c (string-ref str i)])
               (cond
@@ -431,7 +462,7 @@
                 [(or ($wb-midletter? c) ($wb-midnumlet? c) ($wb-single-quote? c)) (trans sWB6/WB7/WB7a i c seen-cased? ac)] ; WB6/WB7
                 [($wb-numeric? c) (trans sNumeric i c seen-cased? ac)] ; WB9
                 [($wb-extendnumlet? c) (trans sExtendnumlet i c seen-cased? ac)] ; WB13a
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sAletter i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sAletter i c seen-cased? ac)] ; WB4
                 [else (s0 i ac)]))) ; WB14
           (define (sHebrewletter i seen-cased? ac)
             (let ([c (string-ref str i)])
@@ -442,14 +473,14 @@
                 [($wb-double-quote? c) (trans sWB7b/WB7c i c seen-cased? ac)] ; WB7b, WB7c
                 [($wb-numeric? c) (trans sNumeric i c seen-cased? ac)] ; WB9
                 [($wb-extendnumlet? c) (trans sExtendnumlet i c seen-cased? ac)] ; WB13a
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sHebrewletter i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sHebrewletter i c seen-cased? ac)] ; WB4
                 [else (s0 i ac)]))) ; WB14
           (define (sWB6/WB7/WB7a i seen-cased? ac)
             (let ([c (string-ref str i)])
               (cond
                 [($wb-aletter? c) (trans sAletter i c seen-cased? ac)] ; WB6, WB7
                 [($wb-hebrew-letter? c) (trans sHebrewletter i c seen-cased? ac)] ; WB6, WB7
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sWB6/WB7/WB7a i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sWB6/WB7/WB7a i c seen-cased? ac)] ; WB4
                 ; word break actually should/could have occurred one character earlier if we got here
                 ; from sAletter rather than sHebrewletter but that was before a midlet, midnumlet, or single
                 ; quote which has no titlecase
@@ -458,7 +489,7 @@
             (let ([c (string-ref str i)])
               (cond
                 [($wb-hebrew-letter? c) (trans sHebrewletter i c seen-cased? ac)] ; WB7b, WB7c
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sWB7b/WB7c i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sWB7b/WB7c i c seen-cased? ac)] ; WB4
                 ; word break actually should/could have occurred one character earlier
                 ; but that was before a double quote which has no titlecase
                 [else (s0 i ac)]))) ; WB14
@@ -467,7 +498,7 @@
               (cond
                 [($wb-aletter? c) (trans sAletter i c seen-cased? ac)] ; finishing WB6, WB7
                 [($wb-hebrew-letter? c) (trans sHebrewletter i c seen-cased? ac)] ; finishing WB6, WB7
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sSingleQuote i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sSingleQuote i c seen-cased? ac)] ; WB4
                 [else (s0 i ac)]))) ; WB14
           (define (sNumeric i seen-cased? ac)
             (let ([c (string-ref str i)])
@@ -477,13 +508,13 @@
                 [($wb-hebrew-letter? c) (trans sHebrewletter i c seen-cased? ac)] ; WB10
                 [(or ($wb-midnum? c) ($wb-midnumlet? c) ($wb-single-quote? c)) (trans sWB11/WB12 i c seen-cased? ac)] ; WB11, WB12
                 [($wb-extendnumlet? c) (trans sExtendnumlet i c seen-cased? ac)]
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sNumeric i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sNumeric i c seen-cased? ac)] ; WB4
                 [else (s0 i ac)]))) ; WB14
           (define (sWB11/WB12 i seen-cased? ac)
             (let ([c (string-ref str i)])
               (cond
                 [($wb-numeric? c) (trans sNumeric i c seen-cased? ac)]
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sWB11/WB12 i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sWB11/WB12 i c seen-cased? ac)] ; WB4
                 ; word break actually should/could have occurred one character earlier
                 ; but that was before a midnum, midnumlet, or single quote which has no titltecase
                 [else (s0 i ac)]))) ; WB14
@@ -492,7 +523,7 @@
               (cond
                 [($wb-katakana? c) (trans sKatakana i c seen-cased? ac)] ; WB13
                 [($wb-extendnumlet? c) (trans sExtendnumlet i c seen-cased? ac)] ; WB13a
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sKatakana i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sKatakana i c seen-cased? ac)] ; WB4
                 [else (s0 i ac)]))) ; WB14
           (define (sExtendnumlet i seen-cased? ac)
             (let ([c (string-ref str i)])
@@ -502,13 +533,13 @@
                 [($wb-hebrew-letter? c) (trans sHebrewletter i c seen-cased? ac)] ; WB13b
                 [($wb-numeric? c) (trans sNumeric i c seen-cased? ac)] ; WB13b
                 [($wb-katakana? c) (trans sKatakana i c seen-cased? ac)] ; WB13b
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sExtendnumlet i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sExtendnumlet i c seen-cased? ac)] ; WB4
                 [else (s0 i ac)]))) ; WB14
           (define (sRegionalIndicator i seen-cased? ac)
             (let ([c (string-ref str i)])
               (cond
                 [($wb-regional-indicator? c) (trans sRegionalIndicator i c seen-cased? ac)] ; WB13c
-                [(or ($wb-extend? c) ($wb-format? c)) (trans sExtendnumlet i c seen-cased? ac)] ; WB4
+                [(extend-format-zwj? c) (trans sExtendnumlet i c seen-cased? ac)] ; WB4
                 [else (s0 i ac)]))) ; WB14
           (if (fx= n 0) dst (s0 0 '())))))
   )
@@ -651,7 +682,7 @@
     (string-relop (string-ci>? x1 x2) (string-ci-less? x2 x1))
     (string-relop (string-ci<=? x1 x2) (not (string-ci-less? x2 x1)))
     (string-relop (string-ci>=? x1 x2) (not (string-ci-less? x1 x2)))
- 
+
     (r6rs:string-relop (string=? x1 x2) (string-equal? x1 x2))
     (r6rs:string-relop (string<? x1 x2) (string-less? x1 x2))
     (r6rs:string-relop (string>? x1 x2) (string-less? x2 x1))
@@ -773,7 +804,7 @@
                   (set! ac (cons c ac))
                   (let ([c1 (string-ref s i)])
                     (cond
-                      [(and (and (char<=? hangul-lbase c) 
+                      [(and (and (char<=? hangul-lbase c)
                                  (char<=? c hangul-llimit))
                             (and (char<=? hangul-vbase c1)
                                  (char<=? c1 hangul-vlimit)))
@@ -828,4 +859,82 @@
         (unless (string? s) (string-error who s))
         ($compose ($decompose s #f))))
   )
+
+  (let ()
+    (define (grapheme-step ch state)
+      (let ([next ($char-grapheme-step-lookup ($char-grapheme-break ch) state)])
+        (values (fxlogtest next grapheme-break-step-terminated-bit)
+          (fxsrl next grapheme-break-step-state-shift))))
+
+    (define (grapheme-span s start end)
+      (cond
+       [(fx= start end) 0]
+       [else
+        (let-values ([(consumed? state) (char-grapheme-step (string-ref s start) 0)])
+          (cond
+           [consumed? 1]
+           [else
+            (let loop ([i (fx+ start 1)] [state state])
+              (cond
+               [(fx= i end) (fx- i start)]
+               [else
+                (let-values ([(consumed? state) (char-grapheme-step (string-ref s i) state)])
+                  (if consumed?
+                      (if (fx= state 0)
+                          (fx- (fx+ i 1) start) ; CRLF, consumed both
+                          (fx- i start))
+                      (loop (fx+ i 1) state)))]))]))]))
+
+    (define (grapheme-count s start end count)
+      (cond
+       [(fx= start end) count]
+       [else
+        (let ([len (grapheme-span s start end)])
+          (grapheme-count s (fx+ start len) end (fx+ count 1)))]))
+
+    (set! $char-grapheme-step grapheme-step)
+
+    (set! $char-grapheme-other-state
+          (lambda () grapheme-other-state))
+
+    (set-who! char-grapheme-step
+      (lambda (ch state)
+        (unless (char? ch) (char-error who ch))
+        (unless (fixnum? state)
+          ($oops who "~s is not a grapheme cluster state" state))
+        (grapheme-step ch state)))
+
+    (set-who! string-grapheme-span
+      (case-lambda
+       [(s start)
+        (unless (string? s) (string-error who s))
+        (unless (and (fixnum? start) (fx<= 0 start (string-length s)))
+          ($oops who "~s is not a valid start index for ~s" start s))
+        (grapheme-span s start (string-length s))]
+       [(s start end)
+        (unless (string? s) (string-error who s))
+        (let ([k (string-length s)])
+          (unless (and (fixnum? start) (fixnum? end) (fx<= 0 start end k))
+            ($oops who "~s and ~s are not valid start/end indices for ~s" start end s)))
+        (grapheme-span s start end)]))
+
+    (set-who! string-grapheme-count
+      (case-lambda
+       [(s)
+        (unless (string? s) (string-error who s))
+        (grapheme-count s 0 (string-length s) 0)]
+       [(s start)
+        (unless (string? s) (string-error who s))
+        (unless (and (fixnum? start) (fx<= 0 start (string-length s)))
+          ($oops who "~s is not a valid start index for ~s" start s))
+        (grapheme-count s start (string-length s) 0)]
+       [(s start end)
+        (unless (string? s) (string-error who s))
+        (let ([k (string-length s)])
+          (unless (and (fixnum? start) (fixnum? end) (fx<= 0 start end k))
+            ($oops who "~s and ~s are not valid start/end indices for ~s" start end s)))
+        (grapheme-count s start end 0)]))
+    )
+  )
 )
+

@@ -21,7 +21,9 @@
 #ifdef WIN32
 #include <io.h>
 #include <shlobj.h>
+#if !defined(__MINGW32__)
 #pragma comment(lib, "shell32.lib")
+#endif
 #else /* WIN32 */
 #include <sys/file.h>
 #include <dirent.h>
@@ -30,9 +32,16 @@
 
 /* locally defined functions */
 #ifdef WIN32
-static ptr s_wstring_to_bytevector PROTO((const wchar_t *s));
+static ptr s_wstring_to_bytevector(const wchar_t *s);
 #else
-static ptr s_string_to_bytevector PROTO((const char *s));
+static ptr s_string_to_bytevector(const char *s);
+# define WIN32_UNUSED
+#endif
+
+#ifdef WIN32
+# define WIN32_UNUSED UNUSED
+#else
+# define WIN32_UNUSED
 #endif
 
 /* raises an exception if insufficient space cannot be malloc'd.
@@ -107,14 +116,14 @@ wchar_t *S_malloc_wide_pathname(const char *inpath) {
 }
 #endif
 
-IBOOL S_fixedpathp(inpath) const char *inpath; {
+IBOOL S_fixedpathp(const char *inpath) {
   char c; IBOOL res; char *path;
 
   path = S_malloc_pathname(inpath);
   res = (c = *path) == 0
         || DIRMARKERP(c)
 #ifdef WIN32
-        || ((*(path + 1) == ':') && (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'))
+        || ((*(path + 1) == ':') && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')))
 #endif
         || ((c == '.')
             && ((c = *(path + 1)) == 0
@@ -124,7 +133,7 @@ IBOOL S_fixedpathp(inpath) const char *inpath; {
   return res;
 }
 
-IBOOL S_file_existsp(inpath, followp) const char *inpath; IBOOL followp; {
+IBOOL S_file_existsp(const char *inpath, WIN32_UNUSED IBOOL followp) {
 #ifdef WIN32
   wchar_t *wpath; IBOOL res;
   WIN32_FILE_ATTRIBUTE_DATA filedata;
@@ -146,7 +155,7 @@ IBOOL S_file_existsp(inpath, followp) const char *inpath; IBOOL followp; {
 #endif /* WIN32 */
 }
 
-IBOOL S_file_regularp(inpath, followp) const char *inpath; IBOOL followp; {
+IBOOL S_file_regularp(const char *inpath, WIN32_UNUSED IBOOL followp) {
 #ifdef WIN32
   wchar_t *wpath; IBOOL res;
   WIN32_FILE_ATTRIBUTE_DATA filedata;
@@ -170,7 +179,7 @@ IBOOL S_file_regularp(inpath, followp) const char *inpath; IBOOL followp; {
 #endif /* WIN32 */
 }
 
-IBOOL S_file_directoryp(inpath, followp) const char *inpath; IBOOL followp; {
+IBOOL S_file_directoryp(const char *inpath, WIN32_UNUSED IBOOL followp) {
 #ifdef WIN32
   wchar_t *wpath; IBOOL res;
   WIN32_FILE_ATTRIBUTE_DATA filedata;

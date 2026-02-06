@@ -1,29 +1,28 @@
 ;;; Copyright (C) 2008  Abdulaziz Ghuloum, R. Kent Dybvig
 ;;; Copyright (C) 2006,2007  Abdulaziz Ghuloum
-;;; 
+;;;
 ;;; Permission is hereby granted, free of charge, to any person obtaining a
 ;;; copy of this software and associated documentation files (the "Software"),
 ;;; to deal in the Software without restriction, including without limitation
 ;;; the rights to use, copy, modify, merge, publish, distribute, sublicense,
 ;;; and/or sell copies of the Software, and to permit persons to whom the
 ;;; Software is furnished to do so, subject to the following conditions:
-;;; 
+;;;
 ;;; The above copyright notice and this permission notice shall be included in
 ;;; all copies or substantial portions of the Software.
-;;; 
+;;;
 ;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 ;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 ;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
 ;;; THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 ;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 ;;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-;;; DEALINGS IN THE SOFTWARE. 
+;;; DEALINGS IN THE SOFTWARE.
 
 (import (scheme) (unicode-data))
 
 (include "extract-common.ss")
 
-(define ptr-bytes 4)
 (define code-point-limit #x110000)
 (define-table (make-table table-ref table-set! table-ref-code)
   (make-vector vector-ref vector-set!)
@@ -32,27 +31,6 @@
 (define (string-suffix? str suffix)
   (let ([n (string-length str)] [m (string-length suffix)])
     (and (fx>= n m) (string=? (substring str (fx- n m) n) suffix))))
-       
-(define (extract-range str)
-  (define (find-char c s)
-    (let f ([i 0] [n (string-length s)])
-      (cond
-        [(= i n) #f]
-        [(char=? (string-ref s i) c) i]
-        [else (f (+ i 1) n)])))
-  (cond
-    [(find-char #\. str) =>
-     (lambda (i)
-       (cons
-         (hex->num (substring str 0 i))
-         (hex->num (substring str (+ i 2) (string-length str)))))]
-    [else (let ([n (hex->num str)]) (cons n n))]))
-
-; fixnum field laid out as follows:
-;   bits 0-5: category number
-;   bits 6-9: wordbreak property
-;   bits 10-17: combining class
-;   bits 18-29: case/type property bits
 
 (define-syntax define-bitfields
   (lambda (x)
@@ -74,7 +52,7 @@
                  #`((define name #,(fxsll 1 bit)) #,@def*))]
               [(enumeration name id ...)
                (and (identifier? #'name) (for-all identifier? #'(id ...)))
-               (let ([width (bitwise-length (length #'(id ...)))])
+               (let ([width (bitwise-length (- (length #'(id ...)) 1))])
                  (with-syntax ([name-shift (construct-name #'name #'name "-shift")]
                                [name-mask (construct-name #'name #'name "-mask")])
                    (extract (cdr fld*) (+ bit width)
@@ -121,24 +99,26 @@
     wb-newline-property
     ; UNICODE 7.0.0
     wb-double-quote-property wb-single-quote-property
-    wb-hebrew-letter-property wb-regional-indicator-property)
+    wb-hebrew-letter-property wb-regional-indicator-property
+    ; UNICODE 14.0
+    wb-zwj-property wb-wsegspace-property)
   (integer combining-class 8))
 
 ;;; Uppercase = Lu + Other_Uppercase
 ;;; Lowercase = Ll + Other_Lowercase
 ;;; Titlecase = Lt
-;;; Alphabetic = Lu + Ll + Lt + Lm + Lo + Nl + Other_Alphabetic 
+;;; Alphabetic = Lu + Ll + Lt + Lm + Lo + Nl + Other_Alphabetic
 ;;; Numeric = ???
-;;; White_Space = 
+;;; White_Space =
 
 ;;; cased property:
-;;;   D120: A character C is defined to be cased if and only if C has the
+;;;   D135: A character C is defined to be cased if and only if C has the
 ;;;   Lowercase or Uppercase property or has a General_Category value of
-;;;   Titlecase_Letter
+;;;   Titlecase_Letter.
 ;;;
 ;;; case-ignorable property:
-;;;   D121 A character C is defined to be case-ignorable if C has the
-;;;   value MidLetter or the value MidNumLet for the Word_Break property
+;;;   D136 A character C is defined to be case-ignorable if C has the
+;;;   value MidLetter, MidNumLet, or Single_Quote for the Word_Break property
 ;;;   or its General_Category is one of Nonspacing_Mark (Mn),
 ;;;   Enclosing_Mark (Me), Format (Cf), Modifier_Letter (Lm), or
 ;;;   Modifier_Symbol (Sk).
@@ -162,7 +142,9 @@
       [(Single_Quote) (fxior (fxsll wb-single-quote-property wbproperty-shift) case-ignorable-property)]
       [(Hebrew_Letter) (fxsll wb-hebrew-letter-property wbproperty-shift)]
       [(Regional_Indicator) (fxsll wb-regional-indicator-property wbproperty-shift)]
-      [else (error 'name->wbprop "unexpected property ~a" name)])))
+      [(ZWJ) (fxsll wb-zwj-property wbproperty-shift)]
+      [(WSegSpace) (fxsll wb-wsegspace-property wbproperty-shift)]
+      [else (errorf 'name->wbprop "unexpected property ~a" name)])))
 
 (define proplist-properties
   `(["Other_Uppercase"  ,uppercase-property]
@@ -207,7 +189,7 @@
 (define (category/flags x)
   (cond
     [(assq x categories) => cadr]
-    [else (error 'category/flags "invalid cat ~s" x)]))
+    [else (errorf 'category/flags "invalid cat ~s" x)]))
 
 (define (make-cats-table ls)
   (let f ([i 1] [st (car ls)] [ls (cdr ls)] [ac '()])
@@ -243,7 +225,7 @@
             (if (string-suffix? (list-ref x 1) "First>")
                 (let ([y (car ls)] [ls (cdr ls)])
                   (unless (string-suffix? (list-ref y 1) "Last>")
-                    (error #f "expected entry marked Last following entry marked First for ~x" n))
+                    (errorf #f "expected entry marked Last following entry marked First for ~x" n))
                   (let ([m (hex->num (list-ref y 0))])
                     (do ([n n (fx+ n 1)])
                         ((fx> n m))
@@ -254,39 +236,34 @@
   ;;; field0: the character index, numeric
   ;;; field1: the word-break property
   (for-each
-    (lambda (x)
-      (let ([range (extract-range (list-ref x 0))])
-        (let f ([i (car range)] [j (cdr range)])
-          (unless (> i j)
-            (let ([prop (getprop i)])
-              (unless (fx= (fxand (fxsrl prop wbproperty-shift) wbproperty-mask) 0)
-                (error #f "multiple word break properties found for ~x" i))
-              (setprop i (fxior prop (name->wbprop (list-ref x 1))))
-              (f (+ i 1) j))))))
-    (get-unicode-data "UNIDATA/WordBreakProperty.txt"))
+   (lambda (x)
+     (for-each-hex-in-range (list-ref x 0)
+       (lambda (i)
+         (let ([prop (getprop i)])
+           (unless (fx= (fxand (fxsrl prop wbproperty-shift) wbproperty-mask) 0)
+             (errorf #f "multiple word break properties found for ~x" i))
+           (setprop i (fxior prop (name->wbprop (list-ref x 1))))))))
+   (get-unicode-data "UNIDATA/WordBreakProperty.txt"))
   ;;; interesting parts of each element in PropList.txt are:
   ;;; field0: range of character indices
   ;;; field1: property name
   (for-each
-    (lambda (x)
-      (let ([range (extract-range (list-ref x 0))]
-            [name (list-ref x 1)])
-        (cond
-          [(assoc name proplist-properties) =>
-           (lambda (a) 
-             (let ([n (cadr a)])
-               (let f ([i (car range)] [j (cdr range)])
-                 (unless (> i j) 
-                   (setprop i (fxlogor (getprop i) n))
-                   (f (+ i 1) j)))))])))
-    (get-unicode-data "UNIDATA/PropList.txt"))
+   (lambda (x)
+     (cond
+      [(assoc (list-ref x 1) proplist-properties) =>
+       (lambda (a)
+         (let ([n (cadr a)])
+           (for-each-hex-in-range (list-ref x 0)
+             (lambda (i)
+               (setprop i (fxlogor (getprop i) n))))))]))
+   (get-unicode-data "UNIDATA/PropList.txt"))
   ;;; clear constituent property for first 128 characters
   (do ([i 0 (fx+ i 1)])
       ((fx= i 128))
     (setprop i (fxand (getprop i) (fxnot constituent-property))))
   (commonize* tbl)
   (with-output-to-file* "unicode-charinfo.ss"
-    (lambda () 
+    (lambda ()
       (parameterize ([print-graph #t] [print-vector-length #f])
         (pretty-print
           `(module ($char-constituent? $char-subsequent? $char-upper-case? $char-lower-case? $char-title-case? $char-alphabetic?
@@ -294,7 +271,9 @@
                     $wb-aletter? $wb-numeric? $wb-katakana? $wb-extend? $wb-format? $wb-midnum? $wb-midletter?
                     $wb-midnumlet? $wb-extendnumlet? $char-combining-class $char-dump
                     ; UNICODE 7.0.0
-                    $wb-hebrew-letter? $wb-single-quote? $wb-double-quote? $wb-regional-indicator?)
+                    $wb-hebrew-letter? $wb-single-quote? $wb-double-quote? $wb-regional-indicator?
+                    ; UNICODE 14.0
+                    $wb-zwj? $wb-wsegspace?)
              (define category-mask ,category-mask)
              (define unicode-category-table ',tbl)
              (define unicode-category-names
@@ -352,6 +331,8 @@
              (define $wb-double-quote? (wb ,wb-double-quote-property))
              (define $wb-single-quote? (wb ,wb-single-quote-property))
              (define $wb-regional-indicator? (wb ,wb-regional-indicator-property))
+             (define $wb-zwj? (wb ,wb-zwj-property))
+             (define $wb-wsegspace? (wb ,wb-wsegspace-property))
              (define $char-combining-class
                (lambda (c)
                  (fxand (fxsrl (getprop (char->integer c)) ,combining-class-shift)
@@ -388,7 +369,9 @@
                    (and ($wb-double-quote? c) 'double-quote)
                    (and ($wb-single-quote? c) 'single-quote)
                    (and ($wb-regional-indicator? c) 'regional-indicator)
+                   (and ($wb-zwj? c) 'zwj)
+                   (and ($wb-wsegspace? c) 'wsegspace)
                    `(combining-class ,($char-combining-class c))
                    ($char-category c))))))))))
 
-(printf "Happy Happy Joy Joy ~s\n" (sizeof cache))
+(printf "unicode-charinfo.ss cache size: ~a\n" (sizeof cache))

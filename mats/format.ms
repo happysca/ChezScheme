@@ -42,6 +42,7 @@
   (error? (fprintf 'not-a-port "~a ~s" 17 34))
   (error? (format 'not-a-string-port-or-boolean "~a ~s" 17 34))
   (error? (format "bad~\rdirective"))
+  (error? (printf "~a~:*"))
 )
 
 (mat format-continuation ; like slib tests, but with \r\n for DOS
@@ -1460,8 +1461,10 @@
 
 (mat format-slib17 ; variable parameter
   (equal? (format "~va" 10 "abc") "abc       ")
+  (equal? (format "~Va" 10 "abc") "abc       ")
  ; changed 42 to #\* below
   (equal? (format "~v,,,va" 10 #\* "abc") "abc*******")
+  (equal? (format "~V,,,Va" 10 #\* "abc") "abc*******")
 )
 
 (mat format-slib18 ; number of remaining arguments as parameter

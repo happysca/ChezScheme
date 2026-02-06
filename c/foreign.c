@@ -23,8 +23,8 @@
 /* we can now return arbitrary values (aligned or not)
  * since the garbage collector ignores addresses outside of the heap
  * or within foreign segments */
-#define ptr_to_addr(p) ((void *)p)
-#define addr_to_ptr(a) ((ptr)a)
+#define ptr_to_addr(p) TO_VOIDP(p)
+#define addr_to_ptr(a) TO_PTR(a)
 
 /* buckets should be prime */
 #define buckets 457
@@ -36,13 +36,14 @@
 #if defined(HPUX)
 #include <dl.h>
 #define dlopen(path,flags) (void *)shl_load(path, BIND_IMMEDIATE, 0L)
-#define dlerror() strerror(errno)
+#define s_dlerror() Sstring_utf8(strerror(errno), -1)
 #elif defined(WIN32)
 #define dlopen(path,flags) S_ntdlopen(path)
 #define dlsym(h,s) S_ntdlsym(h,s)
-#define dlerror() S_ntdlerror()
+#define s_dlerror() S_ntdlerror()
 #else
 #include <dlfcn.h>
+#define s_dlerror() Sstring_utf8(dlerror(), -1)
 #ifndef RTLD_NOW
 #define RTLD_NOW 2
 #endif /* RTLD_NOW */
@@ -50,19 +51,21 @@
 #endif /* LOAD_SHARED_OBJECT */
 
 /* locally defined functions */
-static iptr symhash PROTO((const char *s));
-static ptr lookup_static PROTO((const char *s));
-static ptr lookup_dynamic PROTO((const char *s, ptr tbl));
-static ptr lookup PROTO((const char *s));
-static ptr remove_foreign_entry PROTO((const char *s));
-static void *lookup_foreign_entry PROTO((const char *s));
-static ptr foreign_entries PROTO((void));
-static ptr foreign_static_table PROTO((void));
-static ptr foreign_dynamic_table PROTO((void));
-static ptr bvstring PROTO((const char *s));
+static iptr symhash(const char *s);
+static ptr lookup_static(const char *s);
+#ifdef LOAD_SHARED_OBJECT
+static ptr lookup_dynamic(const char *s, ptr tbl);
+#endif
+static ptr lookup(const char *s);
+static ptr remove_foreign_entry(const char *s);
+static ptr lookup_foreign_entry(const char *s);
+static ptr foreign_entries(void);
+static ptr foreign_static_table(void);
+static ptr foreign_dynamic_table(void);
+static ptr bvstring(const char *s);
 
 #ifdef LOAD_SHARED_OBJECT
-static void load_shared_object PROTO((const char *path));
+static void load_shared_object(const char *path);
 #endif /* LOAD_SHARED_OBJECT */
 
 #ifdef HPUX
@@ -84,15 +87,15 @@ static ptr bvstring(const char *s) {
 }
 
 /* multiplier weights each character, h = n factors in the length */
-static iptr symhash(s) const char *s; {
-  iptr n, h;
+static iptr symhash(const char *s) {
+  uptr n, h;
 
   h = n = strlen(s);
   while (n--) h = h * multiplier + *s++;
   return (h & 0x7fffffff) % buckets;
 }
 
-static ptr lookup_static(s) const char *s; {
+static ptr lookup_static(const char *s) {
   iptr b; ptr p;
 
   b = symhash(s);
@@ -105,21 +108,47 @@ static ptr lookup_static(s) const char *s; {
 
 #ifdef LOAD_SHARED_OBJECT
 #define LOOKUP_DYNAMIC
-static ptr lookup_dynamic(s, tbl) const char *s; ptr tbl; {
+static ptr lookup_dynamic(const char *s, ptr tbl) {
     ptr p;
 
     for (p = tbl; p != Snil; p = Scdr(p)) {
+
 #ifdef HPUX
-        (void *)value = (void *)0; /* assignment to prevent compiler warning */
+        void *value = NULL;
         shl_t handle = (shl_t)ptr_to_addr(Scar(p));
 
-        if (shl_findsym(&handle, s, TYPE_PROCEDURE, (void *)&value) == 0)
+        /*
+         * With NULL path, use RTLD_SELF to act like dlopen(NULL, ...)
+         * See: https://docstore.mik.ua/manuals/hp-ux/en/B2355-60130/dlsym.3C.html
+         */
+        if (!handle)
+            handle = (void*)RTLD_SELF;
+
+        if (shl_findsym(&handle, s, TYPE_PROCEDURE, &value) == 0)
            return addr_to_ptr(proc2entry(value, NULL));
 #else /* HPUX */
         void *value;
+        void *handle = ptr_to_addr(Scar(p));
 
-        value = dlsym(ptr_to_addr(Scar(p)), s);
-        if (value != (void *)0) return addr_to_ptr(value);
+#ifdef WIN32
+        if (!handle) {
+            HMODULE *modules = S_enum_process_modules();
+            if (modules) {
+                HMODULE *m;
+                for (m = modules; *m; ++m) {
+                    value = dlsym(*m, s);
+                    if (value != NULL) break;
+                }
+                free(modules);
+                if (value != NULL)
+                    return addr_to_ptr(value);
+            }
+        } else
+#endif /* WIN32 */
+        {
+            value = dlsym(handle, s);
+            if (value != NULL) return addr_to_ptr(value);
+        }
 #endif /* HPUX */
     }
 
@@ -127,12 +156,11 @@ static ptr lookup_dynamic(s, tbl) const char *s; ptr tbl; {
 }
 #endif /* LOAD_SHARED_OBJECT */
 
-static ptr lookup(s) const char *s; {
+static ptr lookup(const char *s) {
     iptr b; ptr p;
-
-#ifdef LOOKUP_DYNAMIC
     ptr x;
 
+#ifdef LOOKUP_DYNAMIC
     x = lookup_dynamic(s, S_foreign_dynamic);
     if (x == addr_to_ptr(0))
 #endif /* LOOKUP_DYNAMIC */
@@ -140,7 +168,7 @@ static ptr lookup(s) const char *s; {
     x = lookup_static(s);
     if (x == addr_to_ptr(0)) return x;
 
-    tc_mutex_acquire()
+    tc_mutex_acquire();
 
     b = ptrhash(x);
     for (p = Svector_ref(S_G.foreign_names, b); p != Snil; p = Scdr(p)) {
@@ -153,14 +181,14 @@ static ptr lookup(s) const char *s; {
                                       Svector_ref(S_G.foreign_names, b)));
 
 quit:
-    tc_mutex_release()
+    tc_mutex_release();
     return x;
 }
 
-void Sforeign_symbol(s, v) const char *s; void *v; {
+void Sforeign_symbol(const char *s, void *v) {
     iptr b; ptr x;
 
-    tc_mutex_acquire()
+    tc_mutex_acquire();
 
 #ifdef HPUX
     v = proc2entry(v,name);
@@ -173,15 +201,15 @@ void Sforeign_symbol(s, v) const char *s; void *v; {
     } else if (ptr_to_addr(x) != v)
         S_error1("Sforeign_symbol", "duplicate symbol entry for ~s", Sstring_utf8(s, -1));
 
-    tc_mutex_release()
+    tc_mutex_release();
 }
 
 /* like Sforeign_symbol except it silently redefines the symbol
    if it's already in S_G.foreign_static */
-void Sregister_symbol(s, v) const char* s; void *v; {
+void Sregister_symbol(const char *s, void *v) {
   iptr b; ptr p;
 
-  tc_mutex_acquire()
+  tc_mutex_acquire();
 
   b = symhash(s);
   for (p = Svector_ref(S_G.foreign_static, b); p != Snil; p = Scdr(p))
@@ -193,14 +221,14 @@ void Sregister_symbol(s, v) const char* s; void *v; {
                                       Svector_ref(S_G.foreign_static, b)));
 
  quit:
-  tc_mutex_release()
+  tc_mutex_release();
 }
 
-static ptr remove_foreign_entry(s) const char *s; {
+static ptr remove_foreign_entry(const char *s) {
     iptr b;
     ptr tbl, p1, p2;
 
-    tc_mutex_acquire()
+    tc_mutex_acquire();
 
     b = symhash(s);
     tbl = S_G.foreign_static;
@@ -213,33 +241,40 @@ static ptr remove_foreign_entry(s) const char *s; {
             } else {
                 SETCDR(p1, Scdr(p2))
             }
-            tc_mutex_release()
+            tc_mutex_release();
             return Strue;
         }
     }
-    tc_mutex_release()
+    tc_mutex_release();
     return Sfalse;
 }
 
 #ifdef LOAD_SHARED_OBJECT
-static void load_shared_object(path) const char *path; {
+static void load_shared_object(const char *path) {
     void *handle;
 
-    tc_mutex_acquire()
+    tc_mutex_acquire();
 
-    handle = dlopen(path, RTLD_NOW);
-    if (handle == (void *)NULL)
-        S_error2("", "(while loading ~a) ~a", Sstring_utf8(path, -1),
-                    Sstring_utf8(dlerror(), -1));
+#if defined(WIN32) || defined(HPUX)
+    if (!path) {
+        handle = NULL;
+    } else
+#endif /* machine types */
+    {
+        handle = dlopen(path, RTLD_NOW);
+        if (handle == (void *)NULL)
+            S_error2("", "(while loading ~a) ~a", Sstring_utf8(path, -1), s_dlerror());
+    }
+
     S_foreign_dynamic = Scons(addr_to_ptr(handle), S_foreign_dynamic);
 
-    tc_mutex_release()
+    tc_mutex_release();
 
     return;
 }
 #endif /* LOAD_SHARED_OBJECT */
 
-void S_foreign_entry() {
+void S_foreign_entry(void) {
     ptr tc = get_thread_context();
     ptr name, x, bvname;
     iptr i, n;
@@ -270,11 +305,11 @@ void S_foreign_entry() {
     AC0(tc) = x;
 }
 
-static void *lookup_foreign_entry(s) const char *s; {
-  return ptr_to_addr(lookup(s));
+static ptr lookup_foreign_entry(const char *s) {
+  return lookup(s);
 }
 
-static ptr foreign_entries() {
+static ptr foreign_entries(void) {
     iptr b; ptr p, entries;
 
     entries = Snil;
@@ -286,11 +321,11 @@ static ptr foreign_entries() {
     return entries;
 }
 
-static ptr foreign_static_table() { return S_G.foreign_static; }
+static ptr foreign_static_table(void) { return S_G.foreign_static; }
 #ifdef LOAD_SHARED_OBJECT
-static ptr foreign_dynamic_table() { return S_foreign_dynamic; }
+static ptr foreign_dynamic_table(void) { return S_foreign_dynamic; }
 #else
-static ptr foreign_dynamic_table() { return Sfalse; }
+static ptr foreign_dynamic_table(void) { return Sfalse; }
 #endif /* LOAD_SHARED_OBJECT */
 
 static octet *foreign_address_name(ptr addr) {
@@ -304,7 +339,7 @@ static octet *foreign_address_name(ptr addr) {
   return NULL;
 }
 
-void S_foreign_init() {
+void S_foreign_init(void) {
   if (S_boot_time) {
     S_protect(&S_G.foreign_static);
     S_G.foreign_static = S_vector(buckets);

@@ -1,4 +1,3 @@
-"5_7.ss"
 ;;; 5_7.ss
 ;;; Copyright 1984-2017 Cisco Systems, Inc.
 ;;; 
@@ -16,6 +15,7 @@
 
 ;;; symbol functions
 
+(begin
 (define property-list
    (lambda (s)
       (unless (symbol? s)
@@ -79,14 +79,10 @@
                 (set-cdr! prev (cdr (cdr pl)))
                 ($set-system-property-list! s (cdr (cdr pl))))
             (rp (cdr (cdr pl)) (cdr pl)))))))
+)
 
 (eval-when (compile) (optimize-level 3))
 
-(define $gensym->pretty-name)
-(define gensym-prefix)
-(define gensym-count)
-(define gensym->unique-string)
-(define gensym)
 (let ([prefix "g"] [count 0])
   (define generate-unique-name
    ; a-z must come first in alphabet.  separator must not be in alphabet.
@@ -178,14 +174,13 @@
               (let ([name ($symbol-name sym)])
                 (if (not name)
                     (let ([uname (generate-unique-name)])
-                      ($set-symbol-name! sym
-                        (cons uname (generate-pretty-name)))
-                      ($intern-gensym sym)
+                      ($string-set-immutable! uname)
+                      ($intern-gensym sym (cons uname (generate-pretty-name)))
                       uname)
                     (or (car name)
                         (let ([uname (generate-unique-name)])
-                          (set-car! name uname)
-                          ($intern-gensym sym)
+                          ($string-set-immutable! uname)
+                          ($intern-gensym sym (cons uname (cdr name)))
                           uname))))))))))
   (set! gensym-prefix
     (case-lambda
@@ -197,14 +192,27 @@
       [(x)
        (unless (and (or (fixnum? x) (bignum? x)) (>= x 0))
          ($oops 'gensym-count "~s is not a nonnegative integer" x))
-       (set! count x)]))
+       (set! count x)])) 
   (set-who! gensym
     (case-lambda
       [() (#3%gensym)]
       [(pretty-name)
-       (unless (string? pretty-name) ($oops who "~s is not a string" pretty-name))
-       (#3%gensym pretty-name)]
+       (if (immutable-string? pretty-name)
+           (#3%$gensym pretty-name)
+           (if (string? pretty-name)
+               (#3%$gensym (string->immutable-string pretty-name))
+               ($oops who "~s is not a string" pretty-name)))]
       [(pretty-name unique-name)
        (unless (string? pretty-name) ($oops who "~s is not a string" pretty-name))
        (unless (string? unique-name) ($oops who "~s is not a string" unique-name))
+       ($strings->gensym pretty-name unique-name)]))
+  (set-who! $gensym
+    (case-lambda
+      [() (#3%$gensym)]
+      [(pretty-name)
+       (unless (immutable-string? pretty-name) ($oops who "~s is not an immutable string" pretty-name))
+       (#3%$gensym pretty-name)]
+      [(pretty-name unique-name)
+       (unless (immutable-string? pretty-name) ($oops who "~s is not an immutable string" pretty-name))
+       (unless (immutable-string? unique-name) ($oops who "~s is not an immutable string" unique-name))
        ($strings->gensym pretty-name unique-name)])))

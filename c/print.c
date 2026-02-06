@@ -17,30 +17,32 @@
 #include "system.h"
 
 /* locally defined functions */
-static void pimmediate PROTO((ptr x));
-static void pbox PROTO((ptr x));
-static void pclo PROTO((ptr x));
-static void pcode PROTO((ptr x));
-static void pcons PROTO((ptr x));
-static void pfile PROTO((ptr x));
-static void pinexactnum PROTO((ptr x));
-static IBOOL exact_real_negativep PROTO((ptr x));
-static void pexactnum PROTO((ptr x));
-static void prat PROTO((ptr x));
-static void pchar PROTO((ptr x));
-static void pstr PROTO((ptr x));
-static void psym PROTO((ptr x));
-static void pvec PROTO((ptr x));
-static void pfxvector PROTO((ptr x));
-static void pbytevector PROTO((ptr x));
-static void pflonum PROTO((ptr x));
-static void pfixnum PROTO((ptr x));
-static void pbignum PROTO((ptr x));
-static void wrint PROTO((ptr x));
+static void pimmediate(ptr x);
+static void pbox(ptr x);
+static void pclo(ptr x);
+static void pcode(ptr x);
+static void pcons(ptr x);
+static void pfile(ptr x);
+static void pinexactnum(ptr x);
+static IBOOL exact_real_negativep(ptr x);
+static void pexactnum(ptr x);
+static void prat(ptr x);
+static void pchar(ptr x);
+static void pstr(ptr x);
+static void psym(ptr x);
+static void pvec(ptr x);
+static void pfxvector(ptr x);
+static void pflvector(ptr x);
+static void pbytevector(ptr x);
+static void pflonum(ptr x);
+static void pflodat(double x);
+static void pfixnum(ptr x);
+static void pbignum(ptr x);
+static void wrint(ptr x);
 
-void S_print_init() {}
+void S_print_init(void) {}
 
-void S_prin1(x) ptr x; {
+void S_prin1(ptr x) {
     if (Simmediatep(x)) pimmediate(x);
     else if (Spairp(x)) pcons(x);
     else if (Ssymbolp(x)) psym(x);
@@ -53,6 +55,7 @@ void S_prin1(x) ptr x; {
     else if (Sexactnump(x)) pexactnum(x);
     else if (Svectorp(x)) pvec(x);
     else if (Sfxvectorp(x)) pfxvector(x);
+    else if (Sflvectorp(x)) pflvector(x);
     else if (Sbytevectorp(x)) pbytevector(x);
     else if (Sboxp(x)) pbox(x);
     else if (Sprocedurep(x)) pclo(x);
@@ -64,7 +67,7 @@ void S_prin1(x) ptr x; {
 }
 
 
-static void pimmediate(x) ptr x; {
+static void pimmediate(ptr x) {
     if (Scharp(x)) pchar(x);
     else if (x == Snil) printf("()");
     else if (x == Strue) printf("#t");
@@ -76,7 +79,7 @@ static void pimmediate(x) ptr x; {
     else printf("#<garbage>");
 }
 
-static void pbox(x) ptr x; {
+static void pbox(ptr x) {
     printf("#&");
     S_prin1(Sunbox(x));
 }
@@ -92,7 +95,7 @@ static void pcode(UNUSED ptr x) {
     printf("#<code>");
 }
 
-static void pcons(x) ptr x; {
+static void pcons(ptr x) {
     putchar('(');
     while (1) {
         S_prin1(Scar(x));
@@ -112,39 +115,39 @@ static void pfile(UNUSED ptr x) {
     printf("#<port>");
 }
 
-static void pinexactnum(x) ptr x; {
-    S_prin1(TYPE(&INEXACTNUM_REAL_PART(x),type_flonum));
+static void pinexactnum(ptr x) {
+    pflodat(INEXACTNUM_REAL_PART(x));
     if (INEXACTNUM_IMAG_PART(x) >= 0.0) putchar('+');
-    S_prin1(TYPE(&INEXACTNUM_IMAG_PART(x),type_flonum));
+    pflodat(INEXACTNUM_IMAG_PART(x));
     putchar('i');
 }
 
-static IBOOL exact_real_negativep(x) ptr x; {
+static IBOOL exact_real_negativep(ptr x) {
   if (Sratnump(x)) x = RATNUM(x);
   return Sfixnump(x) ? UNFIX(x) < 0 : BIGSIGN(x);
 }
 
-static void pexactnum(x) ptr x; {
+static void pexactnum(ptr x) {
     S_prin1(EXACTNUM_REAL_PART(x));
     if (!exact_real_negativep(EXACTNUM_IMAG_PART(x))) putchar('+');
     S_prin1(EXACTNUM_IMAG_PART(x));
     putchar('i');
 }
 
-static void prat(x) ptr x; {
+static void prat(ptr x) {
     wrint(RATNUM(x));
     putchar('/');
     wrint(RATDEN(x));
 }
 
-static void pchar(x) ptr x; {
+static void pchar(ptr x) {
   int k = Schar_value(x);
   if (k >= 256) k = '?';
   printf("#\\");
   putchar(k);
 }
 
-static void pstr(x) ptr x; {
+static void pstr(ptr x) {
   iptr i, n = Sstring_length(x);
 
   putchar('"');
@@ -157,17 +160,21 @@ static void pstr(x) ptr x; {
   putchar('"');
 }
 
-static void display_string(x) ptr x; {
-  iptr i, n = Sstring_length(x);
-
-  for (i = 0; i < n; i += 1) {
-    int k = Sstring_ref(x, i);
-    if (k >= 256) k = '?';
-    putchar(k);
+static void display_string(ptr x) {
+  if (!Sstringp(x)) {
+    printf("#<garbage-string>");
+  } else {
+    iptr i, n = Sstring_length(x);
+    
+    for (i = 0; i < n; i += 1) {
+      int k = Sstring_ref(x, i);
+      if (k >= 256) k = '?';
+      putchar(k);
+    }
   }
 }
 
-static void psym(x) ptr x; {
+static void psym(ptr x) {
   ptr name = SYMNAME(x);
   if (Sstringp(name)) {
     display_string(name);
@@ -188,7 +195,7 @@ static void psym(x) ptr x; {
   }
 }
 
-static void pvec(x) ptr x; {
+static void pvec(ptr x) {
     iptr n;
 
     putchar('#');
@@ -207,7 +214,7 @@ static void pvec(x) ptr x; {
     putchar(')');
 }
 
-static void pfxvector(x) ptr x; {
+static void pfxvector(ptr x) {
     iptr n;
 
     putchar('#');
@@ -226,7 +233,26 @@ static void pfxvector(x) ptr x; {
     putchar(')');
 }
 
-static void pbytevector(x) ptr x; {
+static void pflvector(ptr x) {
+    iptr n;
+
+    putchar('#');
+    n = Sflvector_length(x);
+    wrint(FIX(n));
+    printf("vfl(");
+    if (n != 0) {
+        iptr i = 0;
+
+        while (1) {
+            pflodat(Sflvector_ref(x, i));
+            if (++i == n) break;
+            putchar(' ');
+        }
+    }
+    putchar(')');
+}
+
+static void pbytevector(ptr x) {
     iptr n;
 
     putchar('#');
@@ -245,11 +271,15 @@ static void pbytevector(x) ptr x; {
     putchar(')');
 }
 
-static void pflonum(x) ptr x; {
+static void pflonum(ptr x) {
+  pflodat(FLODAT(x));
+}
+
+static void pflodat(double x) {
   char buf[256], *s;
 
  /* use snprintf to get it in a string */
-  (void) snprintf(buf, 256, "%.16g",FLODAT(x));
+  (void) snprintf(buf, 256, "%.16g", x);
 
  /* print the silly thing */
   printf("%s", buf);
@@ -263,7 +293,7 @@ static void pflonum(x) ptr x; {
     }
 }
 
-static void pfixnum(x) ptr x; {
+static void pfixnum(ptr x) {
   if (UNFIX(x) < 0) {
     putchar('-');
     x = S_sub(FIX(0), x);
@@ -271,7 +301,7 @@ static void pfixnum(x) ptr x; {
   wrint(x);
 }
 
-static void pbignum(x) ptr x; {
+static void pbignum(ptr x) {
   if (BIGSIGN(x)) {
     putchar('-');
     x = S_sub(FIX(0), x);
@@ -279,7 +309,7 @@ static void pbignum(x) ptr x; {
   wrint(x);
 }
 
-static void wrint(x) ptr x; {
+static void wrint(ptr x) {
   ptr q, r;
 
   S_trunc_rem(get_thread_context(), x, FIX(10), &q, &r);

@@ -1,12 +1,12 @@
 ;;; 5-4.ms
 ;;; Copyright 1984-2017 Cisco Systems, Inc.
-;;; 
+;;;
 ;;; Licensed under the Apache License, Version 2.0 (the "License");
 ;;; you may not use this file except in compliance with the License.
 ;;; You may obtain a copy of the License at
-;;; 
+;;;
 ;;; http://www.apache.org/licenses/LICENSE-2.0
-;;; 
+;;;
 ;;; Unless required by applicable law or agreed to in writing, software
 ;;; distributed under the License is distributed on an "AS IS" BASIS,
 ;;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -537,6 +537,38 @@
     (char-whitespace? #\linefeed)
  )
 
+(mat char-grapheme-break-property
+    (error? (char-grapheme-break-property))
+    (error? (char-grapheme-break-property #\a #\b))
+    (error? (char-grapheme-break-property 'a))
+    (eq? 'Other (char-grapheme-break-property #\space))
+    (eq? 'Other (char-grapheme-break-property #\a))
+    (eq? 'Extend (char-grapheme-break-property #\x300))
+    (eq? 'Extend (char-grapheme-break-property #\x1122F))
+    (eq? 'SpacingMark (char-grapheme-break-property #\x1122E))
+ )
+
+(mat char-extended-pictographic?
+    (error? (char-extended-pictographic?))
+    (error? (char-extended-pictographic? #\a #\b))
+    (error? (char-extended-pictographic? 'a))
+    (not (char-extended-pictographic? #\space))
+    (not (char-extended-pictographic? #\a))
+    (char-extended-pictographic? #\xA9)
+    (char-extended-pictographic? #\x2195)
+    (char-extended-pictographic? #\x1F4AD)
+    (not (char-extended-pictographic? #\x1F11F))
+ )
+
+(mat char-indic-break-property
+    (error? (char-indic-break-property))
+    (error? (char-indic-break-property #\a #\b))
+    (error? (char-indic-break-property 'a))
+    (eq? 'None (char-indic-break-property #\space))
+    (eq? 'Consonant (char-indic-break-property #\x915))
+    (eq? 'Extend (char-indic-break-property #\x93A))
+    (eq? 'Linker (char-indic-break-property #\x94D)))
+
 (mat char-upcase
     (error? (char-upcase))
     (error? (char-upcase #\a #\b))
@@ -567,6 +599,8 @@
     (error? (char-foldcase 'a))
     (eqv? (char-foldcase #\a) #\a)
     (eqv? (char-foldcase #\Z) #\z)
+    (eqv? (char-foldcase #\x1e9e) #\xDF)
+    (eqv? (char-foldcase #\x1f8d) #\x1f85)
  )
 
 (mat integer->char
@@ -627,6 +661,18 @@
           (errorf #f "failed for ~s" i)))
       #t)
  )
+
+(mat char-
+  (error? (char-))
+  (error? (char- #\a #\b #\c))
+  (error? (char- #\a 4))
+  (eqv? (char- #\b #\a) 1)
+  (eqv? (char- #\a #\b) -1)
+  ;; lambda - eta
+  (eqv? (char- #\x03BB #\x03B7) 4)
+  ;; eta - lambda
+  (eqv? (char- #\x03B7 #\x03BB) -4)
+)
 
 (mat string-for-each
   (error? ; invalid number of arguments
@@ -992,7 +1038,7 @@
   (error? (string-normalize-nfkc "hello" "goodbye"))
   (error? (string-normalize-nfkc 'ouch))
   (begin
-    (load "../unicode/unicode-data.ss")
+    (load (find-source "../unicode/unicode-data.ss"))
     #t)
   (let ()
     (import (unicode-data))
@@ -1002,7 +1048,7 @@
           (cond
             [(= i n) (list (substring str 0 n))]
             [(char=? (string-ref str i) #\space)
-             (cons (substring str 0 i) 
+             (cons (substring str 0 i)
                    (split (substring str (+ i 1) n)))]
             [else (f (add1 i) n)]))))
 
@@ -1014,7 +1060,7 @@
     (let ([data (map (lambda (x) (map conv (list-head x 5)))
                      (filter (lambda (x) (>= (length x) 5))
                        (get-unicode-data
-                         "../unicode/UNIDATA/NormalizationTest.txt")))])
+                         (find-source "../unicode/UNIDATA/NormalizationTest.txt"))))])
       (define NFD string-normalize-nfd)
       (define NFKD string-normalize-nfkd)
       (define NFC string-normalize-nfc)
@@ -1109,12 +1155,12 @@
   (test (char-downcase #\i) #\i)
   (test (char-titlecase #\i) #\I)
   (test (char-foldcase #\i) #\i)
-  
+
   (test (char-upcase #\xDF) #\xDF)
   (test (char-downcase #\xDF) #\xDF)
   (test (char-titlecase #\xDF) #\xDF)
   (test (char-foldcase #\xDF) #\xDF)
-  
+
   (test (char-upcase #\x3A3) #\x3A3)
   (test (char-downcase #\x3A3) #\x3C3)
   (test (char-titlecase #\x3A3) #\x3A3)
@@ -1180,7 +1226,7 @@
   (test (string-downcase "Stra\xDF;e") "stra\xDF;e")
   (test (string-foldcase "Stra\xDF;e") "strasse")
   (test (string-downcase "STRASSE")  "strasse")
-  
+
   (test (string-downcase "\x3A3;") "\x3C3;")
 
   (test (string-upcase "\x39E;\x391;\x39F;\x3A3;") "\x39E;\x391;\x39F;\x3A3;")
@@ -1188,13 +1234,17 @@
   (test (string-downcase "\x39E;\x391;\x39F;\x3A3;\x3A3;") "\x3BE;\x3B1;\x3BF;\x3C3;\x3C2;")
   (test (string-downcase "\x39E;\x391;\x39F;\x3A3; \x3A3;") "\x3BE;\x3B1;\x3BF;\x3C2; \x3C3;")
   (test (string-foldcase "\x39E;\x391;\x39F;\x3A3;") "\x3BE;\x3B1;\x3BF;\x3C3;")
-  (test (string-upcase "\x3BE;\x3B1;\x3BF;\x3C3;") "\x39E;\x391;\x39F;\x3A3;") 
-  (test (string-upcase "\x3BE;\x3B1;\x3BF;\x3C2;") "\x39E;\x391;\x39F;\x3A3;") 
+  (test (string-upcase "\x3BE;\x3B1;\x3BF;\x3C3;") "\x39E;\x391;\x39F;\x3A3;")
+  (test (string-upcase "\x3BE;\x3B1;\x3BF;\x3C2;") "\x39E;\x391;\x39F;\x3A3;")
 
   (test (string-titlecase "kNock KNoCK") "Knock Knock")
   (test (string-titlecase "who's there?") "Who's There?")
   (test (string-titlecase "r6rs") "R6rs") ; this example appears to be wrong in R6RS (Sept 2007 version)
   (test (string-titlecase "R6RS") "R6rs") ; this one, too
+
+  (test (string-titlecase "stra \xDF;e") "Stra Sse")
+  (test (string-titlecase "one \xFB00;e") "One Ffe")
+  (test (string-titlecase "one\xFB00;e") "One\xFB00;e")
 
   (test (string-downcase "A\x3A3;'x") "a\x3C3;'x") ; ' is a MidLetter
 
@@ -1286,7 +1336,7 @@
       (if (not (= n (length chars)))
           (begin (display " but expected ")
                  (write n)
-                 (display " in Unicode 5.0.0")))
+                 (display " in Unicode 17.0.0")))
       (newline)
       0)
     (define-syntax test
@@ -1310,16 +1360,21 @@
    ; #x230A #x230B #x2E42 #x110BD #x1BCA0 #x1BCA1 #x1BCA2 #x1BCA3
    ; rkd: Unicode 7.0 removes:
    ; #x17B4 #x17B5
+   ; Unicode 14.0 adds:
+   ; #x890 #x891 #x8E2 #x2E55 #x2E56 #x2E57 #x2E58 #x2E59 #x2E5A
+   ; #x2E5B #x2E5C #x110CD #x13430 #x13431 #x13432 #x13433 #x13434
+   ; #x13435 #x13436 #x13437 #x13438
     (define excluded-code-points-above-127
       '(
-    
+
      #x80 #x81 #x82 #x83 #x84 #x85 #x86 #x87 #x88 #x89
      #x8A #x8B #x8C #x8D #x8E #x8F #x90 #x91 #x92 #x93
      #x94 #x95 #x96 #x97 #x98 #x99 #x9A #x9B #x9C #x9D
      #x9E #x9F #xA0 #xAB #xAD #xBB #x600 #x601 #x602 #x603
      #x604 #x605 #x61C                                       ; Unicode 7.0
-     #x6DD #x70F #xF3A #xF3B #xF3C #xF3D #x1680 #x169B
-     #x169C
+     #x6DD #x70F
+     #x890 #x891 #x8E2                                       ; Unicode 14.0
+     #xF3A #xF3B #xF3C #xF3D #x1680 #x169B #x169C
      #;#x17B4 #;#x17B5                                       ; Unicode 7.0
      #x180E #x2000 #x2001 #x2002 #x2003
      #x2004 #x2005 #x2006 #x2007 #x2008 #x2009 #x200A #x200B
@@ -1332,12 +1387,12 @@
      #x206A #x206B #x206C
      #x206D #x206E #x206F #x207D #x207E #x208D #x208E
      #x2308 #x2309 #x230A #x230B                             ; Unicode 7.0
-     #x2329 #x232A 
+     #x2329 #x232A
     ;       #x23B4 #x23B5 ; see note above for Unicode 5.0
                           #x2768 #x2769 #x276A #x276B #x276C
      #x276D #x276E #x276F #x2770 #x2771 #x2772 #x2773 #x2774
      #x2775 #x27C5 #x27C6 #x27E6 #x27E7 #x27E8 #x27E9 #x27EA
-     #x27EB 
+     #x27EB
      #x27EC #x27ED #x27EE #x27EF                             ; Unicode 5.1
      #x2983 #x2984 #x2985 #x2986 #x2987 #x2988 #x2989
      #x298A #x298B #x298C #x298D #x298E #x298F #x2990 #x2991
@@ -1347,6 +1402,7 @@
      #x2E20 #x2E21 #x2E22 #x2E23 #x2E24 #x2E25 #x2E26 #x2E27 ; Unicode 5.1
      #x2E28 #x2E29                                           ; Unicode 5.1
      #x2E42                                                  ; Unicode 7.0
+     #x2E55 #x2E56 #x2E57 #x2E58 #x2E59 #x2E5A #x2E5B #x2E5C ; Unicode 14.0
      #x3000
      #x3008 #x3009 #x300A #x300B #x300C #x300D #x300E #x300F
      #x3010 #x3011 #x3014 #x3015 #x3016 #x3017 #x3018 #x3019
@@ -1356,7 +1412,11 @@
      #xFE44 #xFE47 #xFE48 #xFE59 #xFE5A #xFE5B #xFE5C #xFE5D
      #xFE5E #xFEFF #xFF08 #xFF09 #xFF3B #xFF3D #xFF5B #xFF5D
      #xFF5F #xFF60 #xFF62 #xFF63 #xFFF9 #xFFFA #xFFFB
-     #x110BD #x1BCA0 #x1BCA1 #x1BCA2 #x1BCA3                 ; Unicode 7.0
+     #x110BD                                                 ; Unicode 7.0
+     #x110CD #x13430 #x13431 #x13432 #x13433 #x13434 #x13435 ; Unicode 14.0
+     #x13436 #x13437 #x13438                                 ; Unicode 14.0
+     #x13439 #x1343A #x1343B #x1343C #x1343D #x1343E #x1343F ; Unicode 15.0
+     #x1BCA0 #x1BCA1 #x1BCA2 #x1BCA3                         ; Unicode 7.0
      #x1D173
      #x1D174 #x1D175 #x1D176 #x1D177 #x1D178 #x1D179 #x1D17A
      #xE0001 #xE0020 #xE0021 #xE0022 #xE0023 #xE0024 #xE0025
@@ -1408,6 +1468,7 @@
   (test cat1 (char-general-category #\a) => 'Ll)
   (test cat2 (char-general-category #\space) => 'Zs)
   (test cat3 (char-general-category (integer->char #x10FFFF)) => 'Cn)
+  (test cat4 (char-general-category #\x31EF) => 'So) ; Unicode 15.1
 
   (test alpha1 (char-alphabetic? #\a) => #t)
   (test numer1 (char-numeric? #\1) => #t)
@@ -1463,23 +1524,23 @@
         => 0)
 
   (test alphabetic?
-        (report (filter-all-chars char-alphabetic?) 93217)
+        (report (filter-all-chars char-alphabetic?) 147421)
         => 0)
 
   (test numeric?
-        (report (filter-all-chars char-numeric?) 282)
+        (report (filter-all-chars char-numeric?) 1940)
         => 0)
 
   (test whitespace?
-        (report (filter-all-chars char-whitespace?) 26)
+        (report (filter-all-chars char-whitespace?) 25)
         => 0)
 
   (test upper-case?
-        (report (filter-all-chars char-upper-case?) 1362)
+        (report (filter-all-chars char-upper-case?) 2006)
         => 0)
 
   (test lower-case?
-        (report (filter-all-chars char-lower-case?) 1791)
+        (report (filter-all-chars char-lower-case?) 2595)
         => 0)
 
   (test title-case?
@@ -1552,4 +1613,150 @@
   (equal? (string-titlecase "ciao123 futzmo.  goobar") "Ciao123 Futzmo.  Goobar")
   (equal? (string-titlecase "ciao123 futzmo.  goob33ar") "Ciao123 Futzmo.  Goob33ar")
   (equal? (string-titlecase "ciao123 futzmo.  33ar") "Ciao123 Futzmo.  33Ar")
+)
+
+(mat grapheme
+  (error? (string-grapheme-count 'a))
+  (error? (string-grapheme-count "a" -1))
+  (error? (string-grapheme-count "a" 'a))
+  (error? (string-grapheme-count "a" 2))
+  (error? (string-grapheme-count "a" 1 0))
+  (error? (string-grapheme-count "a" 0 'a))
+  (error? (string-grapheme-count "a" 1 2))
+
+  (eqv? 0 (string-grapheme-count ""))
+  (eqv? 1 (string-grapheme-count "a"))
+  (eqv? 0 (string-grapheme-count "a" 1))
+  (eqv? 0 (string-grapheme-count "a" 1 1))
+  (eqv? 0 (string-grapheme-count "a" 1 1))
+
+  (error? (string-grapheme-span "a"))
+  (error? (string-grapheme-span 'a 0))
+  (error? (string-grapheme-span "a" -1))
+  (error? (string-grapheme-span "a" 'a))
+  (error? (string-grapheme-span "a" 2))
+  (error? (string-grapheme-span "a" 1 0))
+  (error? (string-grapheme-span "a" 0 'a))
+  (error? (string-grapheme-span "a" 1 2))
+
+  (eqv? 0 (string-grapheme-span "" 0))
+  (eqv? 1 (string-grapheme-span "a" 0))
+  (eqv? 0 (string-grapheme-span "a" 1))
+  (eqv? 0 (string-grapheme-span "a" 1 1))
+  (eqv? 0 (string-grapheme-span "a" 1 1))
+
+  (error? (char-grapheme-step "a" 0))
+  (error? (char-grapheme-step 'a 0))
+  (error? (char-grapheme-step #\a #\a))
+  (error? (char-grapheme-step #\a (expt 2 100)))
+
+  (let-values ([(consume? state) (char-grapheme-step #\a 0)])
+    (and (not consume?)
+         (not (eqv? 0 state))))
+
+  (let-values ([(consume? state) (char-grapheme-step #\a 0)])
+    (let-values ([(consume? state) (char-grapheme-step #\b state)])
+      (and consume?
+           (not (eqv? 0 state)))))
+
+  (let-values ([(consume? state) (char-grapheme-step #\x1 0)])
+    (and consume?
+         (eqv? 0 state)))
+
+  (let-values ([(consume? state) (char-grapheme-step #\a 0)])
+    (let-values ([(consume? state) (char-grapheme-step #\x300 state)])
+      (and (not consume?)
+           (not (eqv? 0 state)))))
+
+  (let ()
+    (import (unicode-data))
+    (define (split str)
+      (define (maybe-cons s e cdr)
+        (if (fx= s e)
+            cdr
+            (cons (substring str s e) cdr)))
+      (let lp ([s 0] [e 0] [n (string-length str)])
+        (cond
+         [(fx= e n) (maybe-cons s e '())]
+         [(char-whitespace? (string-ref str e))
+          (maybe-cons s e (lp (fx+ e 1) (fx+ e 1) n))]
+         [else (lp s (fx+ e 1) n)])))
+
+    ;; The test sequences come from GraphemeBreakTest.txt.
+    ;; #\xF7 (division sign) indicates a breakable position, mapped to 'then.
+    ;; #\xD7 (multiplcation sign) indicates a non-breakable position, mapped to 'and.
+
+    (define (conv fields)
+      (let lp ([ls (cdr (split (car fields)))])
+        (if (null? (cdr ls))
+            '()
+            (cons
+             (let ([s (car ls)])
+               (cond
+                [(string=? s "\xF7;") 'then]
+                [(string=? s "\xD7;") 'and]
+                [else (string->number s 16)]))
+             (lp (cdr ls))))))
+
+    (define seqs
+      `((#x231A then #x000A then #x231A)
+        ,@(map conv (get-unicode-data (find-source "../unicode/UNIDATA/GraphemeBreakTest.txt")))))
+
+    (for-each (lambda (seq)
+                ; (printf "~x\n" seq)
+                (let ([s (list->string
+                          (map integer->char
+                               (filter integer? seq)))]
+                      [pieces (let loop ([seq seq] [start 0] [i 0])
+                                (cond
+                                  [(null? seq)
+                                   (list start)]
+                                  [(eq? 'and (car seq))
+                                   (loop (cdr seq) start i)]
+                                  [(eq? 'then (car seq))
+                                   (cons start (loop (cdr seq) i i))]
+                                  [else
+                                   (loop (cdr seq) start (add1 i))]))])
+                  (let ([str-pieces
+                         (let loop ([i 0])
+                           (cond
+                             [(= i (string-length s)) '()]
+                             [else
+                              (cons i (loop (+ i (string-grapheme-span s i))))]))])
+                    (unless (equal? pieces str-pieces)
+                      (errorf 'seq "mismatch ~x ~s ~s ~s" seq s pieces str-pieces)))
+                  (let ([stream-str-pieces
+                         (let loop ([i 0] [start 0] [state 0])
+                           (cond
+                             [(= i (string-length s))
+                              (if (fx= state 0)
+                                  '()
+                                  (list start))]
+                             [else
+                              (let-values ([(consume? state)
+                                            (char-grapheme-step (string-ref s i) state)])
+                                (if consume?
+                                    (cons start (loop (+ i 1)
+                                                      (if (fx= state 0) (+ i 1) i)
+                                                      state))
+                                    (loop (+ i 1) start state)))]))])
+                    (unless (equal? pieces stream-str-pieces)
+                      (errorf 'seq "stream mismatch ~x ~s ~s ~s" seq s pieces stream-str-pieces)))
+                  (let ([n (string-grapheme-count s)])
+                    (unless (= n (length pieces))
+                      (errorf 'seq "count mismatch ~x ~s ~s ~s" seq s n (length pieces))))))
+              seqs)
+    #t)
+)
+
+(mat string->symbol
+  (immutable-string? (symbol->string (string->symbol "example")))
+  (let* ([str (string-copy "example")]
+         [sym (string->symbol str)])
+    (string-set! str 0 #\E)
+    (and (equal? str "Example")
+         (equal? (symbol->string sym) "example")))
+  (immutable-string? (symbol->string (string->symbol "")))
+  ;; make sure `string->symbol` didn't make the mutable empty string immutable:
+  (not (immutable-string? (string)))
 )

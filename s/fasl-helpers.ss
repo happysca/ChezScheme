@@ -34,7 +34,7 @@
       [else ($oops 'put16-be "unsupported fixnum size")]))
   (define put16
     (lambda (p n)
-      (constant-case native-endianness
+      (constant-case fasl-endianness
         [(little) (put16-le p n)]
         [(big) (put16-be p n)])))
   (define put32-le
@@ -87,7 +87,7 @@
       [else ($oops 'put32-be "unsupported fixnum size")]))
   (define put32
     (lambda (p n)
-      (constant-case native-endianness
+      (constant-case fasl-endianness
         [(little) (put32-le p n)]
         [(big) (put32-be p n)])))
   (define put64-le
@@ -110,7 +110,7 @@
          (put32-be p (logand n (bit-mask 32)))])))
   (define put64
     (lambda (p n)
-      (constant-case native-endianness
+      (constant-case fasl-endianness
         [(little) (put64-le p n)]
         [(big) (put64-be p n)])))
   (define put-iptr
@@ -127,16 +127,16 @@
         ($oops 'compiler-internal "put-uptr received negative input ~s" n))
       (let f ([n n] [cbit 0])
         (if (and (fixnum? n) (fx<= n 127))
-            (put-u8 p (fxlogor (fxsll n 1) cbit))
+            (put-u8 p (fxlogor n cbit))
             (begin
-              (f (ash n -7) 1)
-              (put-u8 p (fxlogor (fxsll (logand n #x7f) 1) cbit)))))))
+              (f (ash n -7) 128)
+              (put-u8 p (fxlogor (logand n #x7f) cbit)))))))
 )
 
 (define emit-header
   (case-lambda
-    [(p mtype) (emit-header p mtype '())]
-    [(p mtype bootfiles)
+    [(p version mtype) (emit-header p version mtype '())]
+    [(p version mtype bootfiles)
      (define (put-str p s)
        (let ([n (string-length s)])
          (do ([i 0 (fx+ i 1)])
@@ -146,12 +146,18 @@
                ($oops #f "cannot handle bootfile name character ~s whose integer code exceeds 255" c))
              (put-u8 p k)))))
      (put-bytevector p (constant fasl-header))
-     (put-uptr p (constant scheme-version))
+     (put-uptr p version)
      (put-uptr p mtype)
-     (put-u8 p (char->integer #\())           ; )
+     (put-u8 p (char->integer #\())
      (let f ([bootfiles bootfiles] [sep? #f])
        (unless (null? bootfiles)
-         (when sep? (put-u8 p (char->integer #\space)))
-         (put-str p (car bootfiles))
-         (f (cdr bootfiles) #t)))        ; (
+         (cond
+           [(string? (car bootfiles))
+            (when sep? (put-u8 p (char->integer #\space)))
+            (put-str p (car bootfiles))
+            (f (cdr bootfiles) #t)]
+           [else
+            ;; strip produces dependenices as a sequence of bytes
+            (put-u8 p (car bootfiles))
+            (f (cdr bootfiles) #f)])))
      (put-u8 p (char->integer #\)))]))
